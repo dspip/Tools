@@ -24,14 +24,22 @@ int main(int argc , char ** argv)
     nvjpegStatus_t jpegsetsamplingfactors = nvjpegEncoderParamsSetSamplingFactors(nv_enc_params, NVJPEG_CSS_444, stream);
     
     g_print("state %d %d %d %d %d\n",jpegstate,jpegstatecreate,jpegparamscreate,jpegsetquality,jpegsetsamplingfactors);
-    guint w = 1920 ;
-    guint h = 1080;
+    guint w = 640 ;
+    guint h = 480;
     //guint w = 640 ;
     //guint h = 480 ;
 #if 1 
     char * inputdata = NULL;
     cudaError_t err = cudaMalloc((void**)&inputdata,w * h * 3);
-    cudaMemset2D(inputdata, 16920 * 3 ,255,300,108);
+
+    char * filecontents = NULL;
+    guint64 length = 0;
+    gboolean filefound = g_file_get_contents ( "FRAME1", &filecontents, &length, NULL);
+    if(filefound && length == w * h * 3)
+    {
+        cudaMemcpy2D(inputdata ,w *3 ,filecontents, w * 3 ,w * 3 ,h ,cudaMemcpyHostToDevice);
+    }
+
 #else 
     unsigned char * inputdata = malloc(640 * 480 * 3);
     for(int i = 0 ; i < 640 * 480 * 3;++i)
@@ -47,7 +55,7 @@ int main(int argc , char ** argv)
     nv_image.pitch[0] = w * 3;
     // Fill nv_image with image data, let's say 640x480 image in RGB format
 
-    guint64 iterations = 1000 ;
+    guint64 iterations = 100 ;
 
     gint64 starttime = g_get_real_time(); 
     char * outputdata = NULL;  
@@ -56,6 +64,8 @@ int main(int argc , char ** argv)
     {
         // Compress image
         // g
+        nvjpegStatus_t jpegsetquality = nvjpegEncoderParamsSetQuality(nv_enc_params,i,stream);
+        guint64 startencode = g_get_real_time();
         nvjpegStatus_t jpegencoded = nvjpegEncodeImage(nv_handle, nv_enc_state, nv_enc_params, &nv_image, NVJPEG_INPUT_RGBI, w, h, stream);
         printf("encoded %d \n",jpegencoded);
         size_t length = 0;
@@ -66,9 +76,12 @@ int main(int argc , char ** argv)
         // get stream itself
         outputdata = malloc(length);
         nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, outputdata, &length, 0);
-        if(i == iterations - 1)
-            g_file_set_contents("test.jpeg",outputdata,length,0);
-
+        guint64 endencode = g_get_real_time();
+        { 
+            gdouble dt = (gdouble)(endencode - startencode);
+            gchar* filename = g_strdup_printf("images/%d_%.2f.jpeg",i,dt);
+            g_file_set_contents(filename,outputdata,length,0);
+        }
         free(outputdata);
     }
     // get compressed stream size
