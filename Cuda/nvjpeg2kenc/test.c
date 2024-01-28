@@ -163,36 +163,39 @@ int main(int argc , char ** argv)
     g_print("record : %d\n",e);
 
     guint64 prevtime = g_get_real_time();
-    for(int i = 0 ; i < iterations; ++i)
+    GString * timingsdata = g_string_new("qp,fps,size\n");
+
+    cudaMalloc((void**)&outputdata,1000* 1000 * 2);
+
+    for(int q = 1 ; q < iterations; ++q)
     {
-        nvjpeg2kStatus_t jpegsetquality = nvjpeg2kEncodeParamsSetQuality(nv_enc_params, i);
+        nvjpeg2kStatus_t jpegsetquality = nvjpeg2kEncodeParamsSetQuality(nv_enc_params, q);
         cudaEvent_t startEvent = NULL, stopEvent;
         // Compress image
         
-        
         guint64 startencode = g_get_real_time();
-        nvjpeg2kStatus_t jpegencoded = nvjpeg2kEncode(nv_handle, nv_enc_state, nv_enc_params, &nv_image, stream);
-        //if(i% 10 == 0 )
-        //{
-        //    guint64 currenttime = g_get_real_time();
-        //    g_print("%d : encoded \%d t %ld \n",i,jpegencoded,(currenttime-prevtime)/1000 );
-        //    prevtime = currenttime;
-        //}
-        nvjpeg2kEncodeRetrieveBitstream(nv_handle, nv_enc_state, NULL, &length, stream);
+        int qualityiter = 10;
+        for (int j = 0; j < qualityiter ; j++)
+        {
+            nvjpeg2kStatus_t jpegencoded = nvjpeg2kEncode(nv_handle, nv_enc_state, nv_enc_params, &nv_image, stream);
+            nvjpeg2kEncodeRetrieveBitstream(nv_handle, nv_enc_state, NULL, &length, stream);
 
-        if(outputdata == NULL)
-            outputdata = malloc(length);
+            cudaStreamSynchronize(stream);
+            // get stream itself
+            //nvjpeg2kEncodeRetrieveBitstreamDevice(nv_handle, nv_enc_state, outputdata, &length, stream);
 
-        cudaStreamSynchronize(stream);
-        // get stream itself
-        nvjpeg2kEncodeRetrieveBitstream(nv_handle, nv_enc_state, outputdata, &length, stream);
+            //gchar * filename = g_strdup_printf("images/test_%d.j2k",i);
+            //g_print("%d length %ld\n",i,length);
+            //g_file_set_contents(filename,outputdata,length,0);
+        }
+        g_print("%d length %ld\n",q,length);
+
         guint64 endencode = g_get_real_time();
-
-        gchar * filename = g_strdup_printf("images/test_%d.j2k",i);
-        g_print("%d length %ld\n",i,length);
-        g_file_set_contents(filename,outputdata,length,0);
+        gdouble dt = (gdouble)(endencode - startencode)/(qualityiter);
+        g_string_append_printf(timingsdata,"%d_%.1f_%ld\n",q,dt,length);
 
     }
+    g_file_set_contents("timingdata",timingsdata->str,timingsdata->len,0);
     // get compressed stream size
     gint64 endtime= g_get_real_time(); 
     gint64 dtime = endtime-starttime;
@@ -200,7 +203,6 @@ int main(int argc , char ** argv)
     guint64 processedbytes = iterations * (w * h * 3);
     g_print("res %uX%u  | total deltatime %.3fsec | t/iter : %.3fus | image/sec: %.3f |  processed MB: %.3f  | MB/s: %f \n",w,h,(gfloat)dtime/1e6,timeperiter,1e6 /(timeperiter),processedbytes/1e6,processedbytes/(gfloat)dtime);
 
-    free(outputdata);
 
     //gulong microseconds;
     //gdouble encodingTime = g_timer_elapsed(tmr,&microseconds);
