@@ -2,6 +2,7 @@
 #include "cuda.h"
 #include <stdio.h>
 #include <glib.h>
+#include <math.h>
 
 int main(int argc , char ** argv)
 {
@@ -35,6 +36,15 @@ int main(int argc , char ** argv)
     char * filecontents = NULL;
     guint64 length = 0;
     gboolean filefound = g_file_get_contents ( "FRAME1", &filecontents, &length, NULL);
+    //for (int i = 0 ; i <  640 * 480 * 3 ; i++) 
+    //{
+    //    float sinI = sin(i);
+    //    filecontents[i] = 255 * sin(i);
+    //    if(sinI > 0.4)
+    //    {
+    //        i+=9;
+    //    }
+    //}
     if(filefound && length == w * h * 3)
     {
         cudaMemcpy2D(inputdata ,w *3 ,filecontents, w * 3 ,w * 3 ,h ,cudaMemcpyHostToDevice);
@@ -56,39 +66,43 @@ int main(int argc , char ** argv)
     // Fill nv_image with image data, let's say 640x480 image in RGB format
 
     guint64 iterations = 100 ;
+    guint64 qualityiter = 100; 
 
     gint64 starttime = g_get_real_time(); 
     char * outputdata = NULL;  
     g_print(" time %ld\n",starttime);
-    for(int i = 0 ; i < iterations; ++i)
+    for(int q = 1 ; q < iterations; ++q)
     {
-        // Compress image
-        // g
-        nvjpegStatus_t jpegsetquality = nvjpegEncoderParamsSetQuality(nv_enc_params,i,stream);
-        guint64 startencode = g_get_real_time();
-        nvjpegStatus_t jpegencoded = nvjpegEncodeImage(nv_handle, nv_enc_state, nv_enc_params, &nv_image, NVJPEG_INPUT_RGBI, w, h, stream);
-        printf("encoded %d \n",jpegencoded);
-        size_t length = 0;
-        nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, NULL, &length, stream);
-        g_print("%d length %ld\n",i,length);
+        nvjpegStatus_t jpegsetquality = nvjpegEncoderParamsSetQuality(nv_enc_params,q,stream);
 
-        cudaStreamSynchronize(stream);
-        // get stream itself
-        outputdata = malloc(length);
-        nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, outputdata, &length, 0);
-        guint64 endencode = g_get_real_time();
-        { 
-            gdouble dt = (gdouble)(endencode - startencode);
-            gchar* filename = g_strdup_printf("images/%d_%.2f.jpeg",i,dt);
-            g_file_set_contents(filename,outputdata,length,0);
+        guint64 startencode = g_get_real_time();
+        qualityiter = 100; 
+        for (int j = 0; j < qualityiter; j++) 
+        {
+            nvjpegStatus_t jpegencoded = nvjpegEncodeImage(nv_handle, nv_enc_state, nv_enc_params, &nv_image, NVJPEG_INPUT_RGBI, w, h, stream);
+            //printf("encoded %d \n",jpegencoded);
+            nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, NULL, &length, stream);
+            //g_print("%d length %ld\n",i,length);
+            cudaStreamSynchronize(stream);
+
+            if(outputdata == NULL)
+                outputdata = malloc(length);
+            // get stream itself
+            nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, outputdata, &length, 0);
         }
+        guint64 endencode = g_get_real_time();
+        gdouble dt = (gdouble)(endencode - startencode)/(qualityiter);
+        gchar* filename = g_strdup_printf("images/%d_%.1f_%ld.jpeg",q,dt,length);
+        g_file_set_contents(filename,outputdata,length,0);
         free(outputdata);
+        outputdata = NULL;
     }
     // get compressed stream size
     gint64 endtime= g_get_real_time(); 
     gint64 dtime = endtime-starttime;
-    gfloat timeperiter = (gfloat)dtime/iterations;
-    guint64 processedbytes = iterations * (w * h * 3);
+    guint64 muliter = iterations*qualityiter;
+    gfloat timeperiter = (gfloat)dtime/muliter;
+    guint64 processedbytes = muliter * (w * h * 3);
     g_print("res %uX%u deltatime %fsec  t/iter : %fus image/sec: %f processed MB: %.3f mb/s: %f \n",w,h,(gfloat)dtime/1e6,timeperiter,1e6 /(timeperiter),processedbytes/1e6,processedbytes/(gfloat)dtime);
 
     //gulong microseconds;
