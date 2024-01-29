@@ -25,8 +25,8 @@ int main(int argc , char ** argv)
     nvjpegStatus_t jpegsetsamplingfactors = nvjpegEncoderParamsSetSamplingFactors(nv_enc_params, NVJPEG_CSS_444, stream);
     
     g_print("state %d %d %d %d %d\n",jpegstate,jpegstatecreate,jpegparamscreate,jpegsetquality,jpegsetsamplingfactors);
-    guint w = 640 ;
-    guint h = 480;
+    guint w = 1920 ;
+    guint h = 1080 ; 
     //guint w = 640 ;
     //guint h = 480 ;
 #if 1 
@@ -39,9 +39,16 @@ int main(int argc , char ** argv)
     char * filecontents = NULL;
     guint64 length = 0;
     gboolean filefound = g_file_get_contents ( "FRAME1", &filecontents, &length, NULL);
+
     if(filefound && length == w * h * 3)
     {
         cudaMemcpy2D(inputdata ,w *3 ,filecontents, w * 3 ,w * 3 ,h ,cudaMemcpyHostToDevice);
+    }
+    else if(w == 1920 && h == 1080)
+    {
+        guint32 iw = 640; 
+        guint32 ih = 480; 
+        cudaMemcpy2D(inputdata ,iw *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
     }
     for (int i = 0 ; i <  640 * 480 * 3 ; i++) 
     {
@@ -55,6 +62,12 @@ int main(int argc , char ** argv)
     if(filefound && length == w * h * 3)
     {
         cudaMemcpy2D(inputdata0 ,w *3 ,filecontents, w * 3 ,w * 3 ,h ,cudaMemcpyHostToDevice);
+    }
+    else if(w == 1920 && h == 1080)
+    {
+        guint32 iw = 640; 
+        guint32 ih = 480; 
+        cudaMemcpy2D(inputdata0 ,iw *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
     }
 
 #else 
@@ -94,7 +107,7 @@ int main(int argc , char ** argv)
         nvjpegStatus_t jpegsetquality = nvjpegEncoderParamsSetQuality(nv_enc_params,q,stream);
 
         guint64 startencode = g_get_real_time();
-        qualityiter = 1000; 
+        qualityiter = 100; 
         for (int j = 0; j < qualityiter; j++) 
         {
             nvjpegImage_t * nv_image = (j % 2 == 0) ? &nv_image0 : &nv_image1;
