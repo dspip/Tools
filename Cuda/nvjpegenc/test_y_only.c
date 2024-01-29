@@ -71,8 +71,8 @@ int main(int argc , char ** argv)
     
     nvjpegImage_t nv_image1 = {};
     nv_image1.channel[0] = inputdata;
-    nv_image1.channel[1] = inputdata + w * h;
-    nv_image1.channel[2] = inputdata + 2*w*h;
+    nv_image1.channel[1] = inputdata;
+    nv_image1.channel[2] = inputdata;
     nv_image1.pitch[0] = w;
     nv_image1.pitch[1] = w;
     nv_image1.pitch[2] = w;
@@ -80,8 +80,8 @@ int main(int argc , char ** argv)
     nvjpegImage_t nv_image0 = {};
 
     nv_image0.channel[0] = inputdata0;
-    nv_image0.channel[1] = inputdata0 + w * h;
-    nv_image0.channel[2] = inputdata0 + 2*w*h;
+    nv_image0.channel[1] = inputdata0;
+    nv_image0.channel[2] = inputdata0;
     nv_image0.pitch[0] = w;
     nv_image0.pitch[1] = w;
     nv_image0.pitch[2] = w;
@@ -103,7 +103,7 @@ int main(int argc , char ** argv)
         nvjpegStatus_t jpegsetquality = nvjpegEncoderParamsSetQuality(nv_enc_params,q,stream);
 
         guint64 startencode = g_get_real_time();
-        qualityiter = 100; 
+        qualityiter = 1000; 
         for (int j = 0; j < qualityiter; j++) 
         {
             nvjpegImage_t * nv_image = (j % 2 == 0) ? &nv_image0 : &nv_image1;
