@@ -27,8 +27,8 @@ int main(int argc , char ** argv)
     nvjpegStatus_t jpegoptimizedhuffman = nvjpegEncoderParamsSetOptimizedHuffman(nv_enc_params, hoptimized, stream);
     
     g_print("state %d %d %d %d %d\n",jpegstate,jpegstatecreate,jpegparamscreate,jpegsetquality,jpegsetsamplingfactors);
-    guint w = 640;
-    guint h = 512 ; 
+    guint w = 1920;
+    guint h = 1080 ; 
     //guint w = 640 ;
     //guint h = 480 ;
     
@@ -46,6 +46,22 @@ int main(int argc , char ** argv)
     if(filefound && length == w * h)
     {
         cudaMemcpy2D(inputdata ,w ,filecontents, w ,w ,h ,cudaMemcpyHostToDevice);
+    }
+    else 
+    {
+        guint32 iw = 640; 
+        guint32 ih = 512; 
+        cudaMemcpy2D(inputdata ,w  ,filecontents, iw  ,iw  ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + iw ,w ,filecontents, iw   ,iw   ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + iw * 2 ,w  ,filecontents, iw   ,iw   ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + w * ih ,w ,filecontents, iw  ,iw ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + w * ih + iw  ,w ,filecontents, iw ,iw ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + w * ih + 2 * iw ,w ,filecontents, iw ,iw ,ih ,cudaMemcpyHostToDevice);
+
+        cudaMemcpy2D(inputdata + w * ih * 2 ,w ,filecontents, iw ,iw   ,ih/4 ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + w * ih * 2 + iw ,w ,filecontents, iw ,iw  ,ih/4 ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + w * ih * 2 + iw* 2 ,w ,filecontents, iw ,iw  ,ih/4 ,cudaMemcpyHostToDevice);
+
     }
     for (int i = 0 ; i <  640 * 480 ; i++) 
     {
@@ -93,10 +109,10 @@ int main(int argc , char ** argv)
     guint64 qualityiter = 100; 
 
     gint64 starttime = g_get_real_time(); 
-    char * outputdataCpu = malloc(1000 * 1000 * 2); // ~2MB
+    char * outputdataCpu = malloc(1000 * 1000 * 10); // ~2MB
     //
     char * outputdata =NULL;  
-    err = cudaMalloc((void**)&outputdata, 1000 * 1000 * 2); // ~2MB
+    err = cudaMalloc((void**)&outputdata, 1000 * 1000 * 10); // ~2MB
 
     g_print(" time %ld\n",starttime);
     GString * timingsdata = g_string_new("qp_fps_size\n");
@@ -122,8 +138,8 @@ int main(int argc , char ** argv)
             //g_print("%d length %ld\n",q,length);
 
             // get stream itself
-            //nvjpegEncodeRetrieveBitstreamDevice(nv_handle, nv_enc_state, outputdata, &length, 0);
-            nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, outputdataCpu, &length, 0);
+            nvjpegEncodeRetrieveBitstreamDevice(nv_handle, nv_enc_state, outputdata, &length, 0);
+            //nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, outputdataCpu, &length, 0);
         }
 
         guint64 endencode = g_get_real_time();
@@ -131,9 +147,9 @@ int main(int argc , char ** argv)
 
         g_string_append_printf(timingsdata,"%d_%.1f_%ld_%d\n",q,dt,length,hoptimized);
 
-        gchar * file_name = g_strdup_printf("./test/%d_%.1f_%ld_%d.jpeg",q,dt,length,hoptimized);
-        g_file_set_contents(file_name,outputdataCpu,length,0);
-        g_free(file_name);
+        //gchar * file_name = g_strdup_printf("./test/%d_%.1f_%ld_%d.jpeg",q,dt,length,hoptimized);
+        //g_file_set_contents(file_name,outputdataCpu,length,0);
+        //g_free(file_name);
     }
     
     gchar * filepathstats = g_strdup_printf("timingsdata_%c",hoptimized?'o':'n');
