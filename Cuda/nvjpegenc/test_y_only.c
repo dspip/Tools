@@ -15,6 +15,7 @@ int main(int argc , char ** argv)
     nvjpegEncoderParams_t nv_enc_params;
     cudaStream_t stream;
     int quality = 90; 
+    int hoptimized = 0;
 
     // initialize nvjpeg structures
     nvjpegStatus_t jpegstate = nvjpegCreateSimple(&nv_handle);
@@ -22,7 +23,8 @@ int main(int argc , char ** argv)
     nvjpegStatus_t jpegstatecreate = nvjpegEncoderStateCreate(nv_handle, &nv_enc_state, stream);
     nvjpegStatus_t jpegparamscreate = nvjpegEncoderParamsCreate(nv_handle, &nv_enc_params, stream);
     nvjpegStatus_t jpegsetquality = nvjpegEncoderParamsSetQuality(nv_enc_params,quality,stream);
-    nvjpegStatus_t jpegsetsamplingfactors = nvjpegEncoderParamsSetSamplingFactors(nv_enc_params, NVJPEG_CSS_444, stream);
+    nvjpegStatus_t jpegsetsamplingfactors = nvjpegEncoderParamsSetSamplingFactors(nv_enc_params, NVJPEG_CSS_GRAY, stream);
+    nvjpegStatus_t jpegoptimizedhuffman = nvjpegEncoderParamsSetOptimizedHuffman(nv_enc_params, hoptimized, stream);
     
     g_print("state %d %d %d %d %d\n",jpegstate,jpegstatecreate,jpegparamscreate,jpegsetquality,jpegsetsamplingfactors);
     guint w = 640;
@@ -71,20 +73,20 @@ int main(int argc , char ** argv)
     
     nvjpegImage_t nv_image1 = {};
     nv_image1.channel[0] = inputdata;
-    nv_image1.channel[1] = inputdata;
-    nv_image1.channel[2] = inputdata;
+    nv_image1.channel[1] = inputdata + w*h ;
+    nv_image1.channel[2] = inputdata + 2*w*h;
     nv_image1.pitch[0] = w;
-    nv_image1.pitch[1] = w;
-    nv_image1.pitch[2] = w;
+    //nv_image1.pitch[1] = w;
+    //nv_image1.pitch[2] = w;
 
     nvjpegImage_t nv_image0 = {};
 
     nv_image0.channel[0] = inputdata0;
-    nv_image0.channel[1] = inputdata0;
-    nv_image0.channel[2] = inputdata0;
+    nv_image0.channel[1] = inputdata0 + w * h  ;
+    nv_image0.channel[2] = inputdata0 + 2 * w * h;
     nv_image0.pitch[0] = w;
-    nv_image0.pitch[1] = w;
-    nv_image0.pitch[2] = w;
+    //nv_image0.pitch[1] = w;
+    //nv_image0.pitch[2] = w;
     // Fill nv_image with image data, let's say 640x480 image in RGB format
 
     guint64 iterations = 100 ;
@@ -108,7 +110,8 @@ int main(int argc , char ** argv)
         {
             nvjpegImage_t * nv_image = (j % 2 == 0) ? &nv_image0 : &nv_image1;
 
-            nvjpegStatus_t jpegencoded = nvjpegEncodeImage(nv_handle, nv_enc_state, nv_enc_params, nv_image, NVJPEG_INPUT_RGB, w, h, stream);
+            //nvjpegStatus_t jpegencoded = nvjpegEncodeImage(nv_handle, nv_enc_state, nv_enc_params, nv_image, NVJPEG_INPUT_RGB, w, h, stream);
+            nvjpegStatus_t jpegencoded = nvjpegEncodeYUV(nv_handle, nv_enc_state, nv_enc_params, nv_image, NVJPEG_CSS_GRAY, w, h, stream);
             cudaStreamSynchronize(stream);
             
             //printf("encoded %d \n",jpegencoded);
@@ -126,14 +129,16 @@ int main(int argc , char ** argv)
         guint64 endencode = g_get_real_time();
         gdouble dt = (gdouble)(endencode - startencode)/(qualityiter);
 
-        g_string_append_printf(timingsdata,"%d_%.1f_%ld\n",q,dt,length);
+        g_string_append_printf(timingsdata,"%d_%.1f_%ld_%d\n",q,dt,length,hoptimized);
 
-        gchar * file_name = g_strdup_printf("./test/%d_%.1f_%ld.jpeg",q,dt,length);
+        gchar * file_name = g_strdup_printf("./test/%d_%.1f_%ld_%d.jpeg",q,dt,length,hoptimized);
         g_file_set_contents(file_name,outputdataCpu,length,0);
         g_free(file_name);
     }
     
-    g_file_set_contents("timingdata",timingsdata->str,timingsdata->len,0);
+    gchar * filepathstats = g_strdup_printf("timingsdata_%c",hoptimized?'o':'n');
+    g_file_set_contents(filepathstats,timingsdata->str,timingsdata->len,0);
+    g_free(filepathstats);
     // get compressed stream size
     gint64 endtime= g_get_real_time(); 
     gint64 dtime = endtime-starttime;
