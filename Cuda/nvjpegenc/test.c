@@ -22,11 +22,11 @@ int main(int argc , char ** argv)
     nvjpegStatus_t jpegstatecreate = nvjpegEncoderStateCreate(nv_handle, &nv_enc_state, stream);
     nvjpegStatus_t jpegparamscreate = nvjpegEncoderParamsCreate(nv_handle, &nv_enc_params, stream);
     nvjpegStatus_t jpegsetquality = nvjpegEncoderParamsSetQuality(nv_enc_params,quality,stream);
-    nvjpegStatus_t jpegsetsamplingfactors = nvjpegEncoderParamsSetSamplingFactors(nv_enc_params, NVJPEG_CSS_444, stream);
+    nvjpegStatus_t jpegsetsamplingfactors = nvjpegEncoderParamsSetSamplingFactors(nv_enc_params, NVJPEG_CSS_420, stream);
     
     g_print("state %d %d %d %d %d\n",jpegstate,jpegstatecreate,jpegparamscreate,jpegsetquality,jpegsetsamplingfactors);
-    guint w = 1920 ;
-    guint h = 1080 ; 
+    guint w = 640;
+    guint h = 480; 
     //guint w = 640 ;
     //guint h = 480 ;
 #if 1 
@@ -48,7 +48,18 @@ int main(int argc , char ** argv)
     {
         guint32 iw = 640; 
         guint32 ih = 480; 
-        cudaMemcpy2D(inputdata ,iw *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + iw * 3 ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + iw * 3 *2 ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + w * 3 * ih ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + w * 3 * ih + iw * 3  ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + w * 3 * ih + 2 * iw * 3  ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
+
+        cudaMemcpy2D(inputdata + w * 3 * ih * 2 ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih/4 ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + w * 3 * ih * 2 + iw*3 ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih/4 ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata + w * 3 * ih * 2 + iw*3 * 2 ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih/4 ,cudaMemcpyHostToDevice);
+
+        //cudaMemcpy2D(inputdata ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
     }
     for (int i = 0 ; i <  640 * 480 * 3 ; i++) 
     {
@@ -67,7 +78,9 @@ int main(int argc , char ** argv)
     {
         guint32 iw = 640; 
         guint32 ih = 480; 
-        cudaMemcpy2D(inputdata0 ,iw *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
+        cudaMemcpy2D(inputdata0 ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
+        //cudaMemcpy2D(inputdata0 ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
+        //cudaMemcpy2D(inputdata0 ,w *3 ,filecontents, iw * 3 ,iw * 3 ,ih ,cudaMemcpyHostToDevice);
     }
 
 #else 
@@ -95,7 +108,7 @@ int main(int argc , char ** argv)
 
 
     gint64 starttime = g_get_real_time(); 
-    //char * outputdata = malloc(1000 * 1000 * 2); // ~2MB
+    char * outputdataCPU = malloc(1000 * 1000 * 10); // ~2MB
     //
     char * outputdata =NULL;  
     err = cudaMalloc((void**)&outputdata, 1000 * 1000 * 2); // ~2MB
@@ -115,22 +128,29 @@ int main(int argc , char ** argv)
             nvjpegStatus_t jpegencoded = nvjpegEncodeImage(nv_handle, nv_enc_state, nv_enc_params, nv_image, NVJPEG_INPUT_RGBI, w, h, stream);
             cudaStreamSynchronize(stream);
             
-            //printf("encoded %d \n",jpegencoded);
+            printf("encoded %d \n",jpegencoded);
             //To CPU
             //nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, NULL, &length, stream);
             //To GPU
             nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, NULL, &length, stream);
-            //g_print("%d length %ld\n",q,length);
+            g_print("%d length %ld\n",q,length);
 
             // get stream itself
             nvjpegEncodeRetrieveBitstreamDevice(nv_handle, nv_enc_state, outputdata, &length, 0);
+
+
+            //needed for file write
+            //nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, outputdataCPU, &length, 0);
         }
 
         guint64 endencode = g_get_real_time();
         gdouble dt = (gdouble)(endencode - startencode)/(qualityiter);
 
         g_string_append_printf(timingsdata,"%d_%.1f_%ld\n",q,dt,length);
-        //g_file_set_contents(filename,outputdata,length,0);
+
+        //file write 
+        //gchar * filename = g_strdup_printf("test/%d_%.1f_%ld.jpeg",q,dt,length);
+        //g_file_set_contents(filename,outputdataCPU,length,0);
     }
     
     g_file_set_contents("timingdata",timingsdata->str,timingsdata->len,0);
