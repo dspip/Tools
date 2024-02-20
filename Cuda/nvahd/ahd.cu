@@ -14,11 +14,9 @@ typedef guint8 pixel;
 #define  odd(n) ((n)&1)
 #define even(n) (!odd((n)))
 
-#define get_filter_color(x,y) (even(x) ? (even(y) ? R : G) : (odd(y) ? B : G))
+#define get_filter_color_grbg(x,y) (even(x) == even(y) ? G : odd(x) && even(y) ? R : B)
 
 //texture<pixel4, 2, cudaReadModeElementType> src_g;
-texture<float4, 2, cudaReadModeElementType> horz_tex;
-texture<float4, 2, cudaReadModeElementType> vert_tex;
 texture<guint8, 2, cudaReadModeElementType> homo_h_tex;
 texture<guint8, 2, cudaReadModeElementType> homo_v_tex;
 
@@ -36,14 +34,17 @@ texture<guint8, 2, cudaReadModeElementType> homo_v_tex;
 #define clampc(a) ((a) < 0) ? 0 : (((a) > 255) ? 255 : (guchar)(a))
 #define tex2Du8 tex2D<guint8>
 
-__global__ void ahd_kernel_interp_g(cudaTextureObject_t src, pixel4* g_horz_res, pixel4* g_vert_res, int width, int height)
+__global__ void ahd_kernel_interp_g(cudaTextureObject_t src, pixel4 * g_horz_res, pixel4 * g_vert_res, int width, int height)
 {
+
   uint x = blockIdx.x*blockDim.x + threadIdx.x;
   uint y = blockIdx.y*blockDim.y + threadIdx.y;
-  if (x < 2 || y < 2 || x >= width-2 || y >= height-2) {
-    return;
+
+  if (x < 2 || y < 2 || x >= width-2 || y >= height-2)
+  {
+      return;
   }
-  int filter_color = get_filter_color(x,y);
+  int filter_color = get_filter_color_grbg(x,y);
 
   char4 h_res, v_res;
   /* Copy existing value to output */
@@ -51,9 +52,9 @@ __global__ void ahd_kernel_interp_g(cudaTextureObject_t src, pixel4* g_horz_res,
   cG(h_res) = cG(v_res) = (filter_color == G) * tex2Du8(src,float(x),float(y));
   cB(h_res) = cB(v_res) = (filter_color == B) * tex2Du8(src,float(x),float(y));
 
-
   /* Interpolate Green values first */
-  if (filter_color == R || filter_color == B) {
+  if (filter_color == R || filter_color == B)
+  {
     /* Filter color is red or blue Interpolate green channel horizontally */
     /* Use existing green values */
     float sum = (tex2Du8(src,x-1,y) +
@@ -131,7 +132,7 @@ __global__  void ahd_kernel_interp_rb(cudaTextureObject_t src_g,float4* g_result
   pixel pixR = texR(src_g,x,y);
   pixel pixB = texB(src_g,x,y);
 
-  guchar filter_color = get_filter_color(x,y);
+  guchar filter_color = get_filter_color_grbg(x,y);
 
   if (filter_color == R || filter_color == B) {
     /* Filter color is red or blue, interpolate missing red or blue channel */
@@ -218,12 +219,11 @@ __global__  void ahd_kernel_interp_rb(cudaTextureObject_t src_g,float4* g_result
   int dx = x - P;
   int dy = y - P;
 
-
 #ifndef _TEST
   if (g_tmp_result != NULL) {
     // During testing, skip global memory access
     pixel *res = &g_tmp_result[y * width + x];
-    //pixel *res = g_tmp_result + res_index;
+
     res[R] = pixR;
     res[G] = texG(src_g,x,y);
     res[B] = pixB;
@@ -274,23 +274,105 @@ __global__ void AddIntsCuda(int * a , int * b)
     *a += *b;
 }
 
-int main()
+int main(int argc , char ** argv)
 {
-    int a= 5;
-    int  b = 10;
-    int * d_a;
-    int * d_b;
+    if(argc != 2)
+    {
+        g_print("Enter input file for testing\n");
+        return -1;
+    }
 
-    cudaMalloc(&d_a,sizeof(int));
-    cudaMalloc(&d_b,sizeof(int));
+    GError * gerr = NULL;
 
-    cudaMemcpy(d_a,&a,sizeof(int),cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b,&b,sizeof(int),cudaMemcpyHostToDevice);
+    gchar * data;
+    gsize length;
 
-    AddIntsCuda<<<1,1>>>(d_a,d_b);
+    gsize width = 10000;
+    gsize pitchWidth = 0;
+    gsize height = 7096; 
 
-    cudaMemcpy(&a,d_a,sizeof(int),cudaMemcpyDeviceToHost);
+    if(g_file_get_contents(argv[1],&data,&length,&gerr) && width * height == length)
+    {
+        cudaChannelFormatDesc pixel_channel = cudaCreateChannelDesc<pixel>();
+        cudaChannelFormatDesc pixel4_channel = cudaCreateChannelDesc<pixel4>();
+        cudaChannelFormatDesc float4_channel = cudaCreateChannelDesc<float4>();
+        cudaChannelFormatDesc float_channel = cudaCreateChannelDesc<float>();
 
-    g_print("Result is %d\n",a);
+        void * src_bayer = NULL;
+        cudaMallocPitch(&src_bayer,&pitchWidth,width,height);
+        cudaMemcpy2D(src_bayer,pitchWidth,data,width,width,height,cudaMemcpyHostToDevice);
+
+        cudaTextureObject_t src_image = {};
+
+        struct cudaResourceDesc resDesc = {};
+        resDesc.resType = cudaResourceTypePitch2D;
+        //resDesc.resType = cudaResourceTypeArray;
+        resDesc.res.pitch2D.devPtr = src_bayer;
+        resDesc.res.pitch2D.desc = pixel_channel; 
+        resDesc.res.pitch2D.width = pitchWidth;
+        resDesc.res.pitch2D.height = height;
+        resDesc.res.pitch2D.pitchInBytes = pitchWidth;
+        cudaTextureDesc tDesc = {};
+       // tDesc.filterMode = cudaFilterModeLinear;
+        tDesc.readMode = cudaReadModeElementType;
+
+        cudaError_t err;
+        err = cudaCreateTextureObject(&src_image, &resDesc, &tDesc, NULL);
+        g_print("err %d\n",err);
+        g_assert(err == cudaSuccess);
+
+        size_t dest_pbuf_size = pitchWidth * height * sizeof(pixel4);
+        pixel4 *d_horz_g = NULL,* d_vert_g;
+        
+        gsize horzPitch = 0;
+        gsize vertPitch = 0;
+        cudaMallocPitch(&d_horz_g,&horzPitch,pitchWidth*sizeof(pixel4),height);
+        cudaMallocPitch(&d_vert_g,&vertPitch,pitchWidth*sizeof(pixel4),height);
+
+        dim3 threadblock(32,8);
+        dim3 gridBlock((width  + threadblock.x - 1)/threadblock.x, (height + threadblock.y - 1)/threadblock.y);
+        ahd_kernel_interp_g<<< gridBlock, threadblock >>>(src_image,d_horz_g,d_vert_g,width,height);
+        cudaDeviceSynchronize();
+
+        pixel4 * horz = (pixel4*)g_malloc0(width*height*sizeof(pixel4));
+        pixel4 * vert = (pixel4*)g_malloc0(width*height*sizeof(pixel4));
+
+        err = cudaMemcpy2D(horz,width * sizeof(pixel4), d_horz_g, width * sizeof(pixel4), width*sizeof(pixel4), height, cudaMemcpyDeviceToHost);
+        g_assert(err == cudaSuccess);
+
+        err = cudaMemcpy2D(vert,width * sizeof(pixel4), d_vert_g, width * sizeof(pixel4), width*sizeof(pixel4), height, cudaMemcpyDeviceToHost);
+        g_assert(err == cudaSuccess);
+        //cudaMemcpy(horz,d_horz_g,dest_pbuf_size,cudaMemcpyDeviceToHost);
+        //cudaMemcpy(vert,d_vert_g,dest_pbuf_size,cudaMemcpyDeviceToHost);
+
+        for (int i = 0; i < width*height; i++)
+        {
+            horz[i].w = 255;
+            vert[i].w = 255;
+        }
+        g_file_set_contents("horz.ppm",(gchar*)horz,width*height*sizeof(pixel4),&gerr);
+        g_file_set_contents("vert.ppm",(gchar*)vert,width*height*sizeof(pixel4),&gerr);
+        g_print("file length : %ld\n",length);
+
+        int a= 5;
+        int  b = 10;
+        int * d_a;
+        int * d_b;
+
+        cudaMalloc(&d_a,sizeof(int));
+        cudaMalloc(&d_b,sizeof(int));
+
+        cudaMemcpy(d_a,&a,sizeof(int),cudaMemcpyHostToDevice);
+        cudaMemcpy(d_b,&b,sizeof(int),cudaMemcpyHostToDevice);
+
+        AddIntsCuda<<<1,1>>>(d_a,d_b);
+        cudaMemcpy(&a,d_a,sizeof(int),cudaMemcpyDeviceToHost);
+        cudaFree(d_a);
+        cudaFree(d_b);
+        cudaFree(src_bayer);
+
+        
+        g_print("Result is %d\n",a);
+    }
 
 }
