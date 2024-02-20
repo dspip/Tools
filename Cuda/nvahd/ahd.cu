@@ -2,6 +2,8 @@
 #include <glib.h>
 //#include<cuda_util.h>
 
+//#define SAVEHORZVERT
+
 #define R 0
 #define G 1
 #define B 2
@@ -269,10 +271,47 @@ __global__  void ahd_kernel_interp_rb(cudaTextureObject_t src_g,float4* g_result
   g_result[dx + (dy*dest_width)] = lab;
 }
 
+#define SORT(a,b) { if ((a)>(b)) SWAPV((a),(b)); }
+#define SWAPV(a,b) { int temp=(a);(a)=(b);(b)=temp; }
+__device__ int median4(int * p) 
+{
+    SORT(p[1], p[2]) ; SORT(p[4], p[5]) ; SORT(p[7], p[8]) ;
+    SORT(p[0], p[1]) ; SORT(p[3], p[4]) ; SORT(p[6], p[7]) ;
+    SORT(p[1], p[2]) ; SORT(p[4], p[5]) ; SORT(p[7], p[8]) ;
+    SORT(p[0], p[3]) ; SORT(p[5], p[8]) ; SORT(p[4], p[7]) ;
+    SORT(p[3], p[6]) ; SORT(p[1], p[4]) ; SORT(p[2], p[5]) ;
+    SORT(p[4], p[7]) ; SORT(p[4], p[2]) ; SORT(p[6], p[4]) ;
+    SORT(p[4], p[2]) ; 
+    return(p[4]); 
+}
+
 __global__ void AddIntsCuda(int * a , int * b)
 {
     *a += *b;
 }
+cudaTextureObject_t SetupTextureAndData(void * d_data,gsize pitchBytes,gsize widthBytes, gsize height,cudaChannelFormatDesc channelDesc)
+{
+
+    cudaTextureObject_t src_image = {};
+    struct cudaResourceDesc resDesc = {};
+    resDesc.resType = cudaResourceTypePitch2D;
+    resDesc.res.pitch2D.devPtr = d_data;
+    resDesc.res.pitch2D.desc = channelDesc; 
+    resDesc.res.pitch2D.width = widthBytes;
+    resDesc.res.pitch2D.height = height;
+    resDesc.res.pitch2D.pitchInBytes = pitchBytes;
+    cudaTextureDesc tDesc = {};
+    tDesc.readMode = cudaReadModeElementType;
+
+    cudaError_t err;
+    err = cudaCreateTextureObject(&src_image, &resDesc, &tDesc, NULL);
+    g_print("err %d\n",err);
+    g_assert(err == cudaSuccess);
+
+    return src_image;
+
+}
+
 
 int main(int argc , char ** argv)
 {
@@ -326,25 +365,39 @@ int main(int argc , char ** argv)
         
         gsize horzPitch = 0;
         gsize vertPitch = 0;
-        cudaMallocPitch(&d_horz_g,&horzPitch,pitchWidth*sizeof(pixel4),height);
-        cudaMallocPitch(&d_vert_g,&vertPitch,pitchWidth*sizeof(pixel4),height);
+        cudaMallocPitch(&d_horz_g, &horzPitch, pitchWidth*sizeof(pixel4), height);
+        cudaMallocPitch(&d_vert_g, &vertPitch, pitchWidth*sizeof(pixel4), height);
 
         dim3 threadblock(32,8);
         dim3 gridBlock((width  + threadblock.x - 1)/threadblock.x, (height + threadblock.y - 1)/threadblock.y);
         ahd_kernel_interp_g<<< gridBlock, threadblock >>>(src_image,d_horz_g,d_vert_g,width,height);
+
+        cudaTextureObject_t src_horz = SetupTextureAndData(d_horz_g,horzPitch,horzPitch,height,pixel4_channel);
+
+        cudaTextureObject_t src_vert = SetupTextureAndData(d_horz_g,vertPitch,vertPitch,height,pixel4_channel);
+
+        float4 * d_horz_result; 
+        float4 * d_vert_result; 
+
+        cudaMalloc(&d_horz_result, horzPitch*height);
+        cudaMalloc(&d_vert_result, vertPitch*height);
+
+        ahd_kernel_interp_rb<<<gridBlock,threadblock>>>(src_horz,d_horz_result , NULL , width, height);
+
+        ahd_kernel_interp_rb<<<gridBlock,threadblock>>>(src_vert,d_vert_result , NULL , width, height);
+
         cudaDeviceSynchronize();
+
+
+#ifdef SAVEHORZVERT 
 
         pixel4 * horz = (pixel4*)g_malloc0(width*height*sizeof(pixel4));
         pixel4 * vert = (pixel4*)g_malloc0(width*height*sizeof(pixel4));
-
         err = cudaMemcpy2D(horz,width * sizeof(pixel4), d_horz_g, width * sizeof(pixel4), width*sizeof(pixel4), height, cudaMemcpyDeviceToHost);
         g_assert(err == cudaSuccess);
 
         err = cudaMemcpy2D(vert,width * sizeof(pixel4), d_vert_g, width * sizeof(pixel4), width*sizeof(pixel4), height, cudaMemcpyDeviceToHost);
         g_assert(err == cudaSuccess);
-        //cudaMemcpy(horz,d_horz_g,dest_pbuf_size,cudaMemcpyDeviceToHost);
-        //cudaMemcpy(vert,d_vert_g,dest_pbuf_size,cudaMemcpyDeviceToHost);
-
         for (int i = 0; i < width*height; i++)
         {
             horz[i].w = 255;
@@ -352,7 +405,10 @@ int main(int argc , char ** argv)
         }
         g_file_set_contents("horz.ppm",(gchar*)horz,width*height*sizeof(pixel4),&gerr);
         g_file_set_contents("vert.ppm",(gchar*)vert,width*height*sizeof(pixel4),&gerr);
+        g_free(horz);
+        g_free(vert);
         g_print("file length : %ld\n",length);
+#endif
 
         int a= 5;
         int  b = 10;
