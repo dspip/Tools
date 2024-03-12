@@ -3,6 +3,10 @@
 #include <math.h>
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "ext/stb_image_write.h"
+
+#define PEARLS
+
+#define BMP
 #define AHD
 #define VNG
 #define HQLinear
@@ -1226,12 +1230,33 @@ int main(int argc ,char ** argv)
         return -6;
     }
 
-
     guint32 size = width*height;
     if(g_file_get_contents(filepath,&contents,&length,&error) && size == length)
     {
         g_print("file loaded\n");
         guint8 * rgb = g_malloc0(length*3);
+
+#ifdef PEARLS
+
+        width/=2;
+        guchar * collapsedcolumns = g_malloc0((width) * height);
+        guint16 * contents_16 = (guint16*)contents;
+        guint16 max = 0;
+
+        for (int i = 0; i < width; i++) 
+        {
+            for (int j = 0; j < height; j++) 
+            {
+               collapsedcolumns[j*width +i] = contents_16[j*width + i]>>4;
+               if(max < contents_16[j*width + i])
+                   max = contents_16[j*width + i];
+            }
+        }
+        g_print("max %hu \n",max);
+        gchar * pearlspath= g_strdup_printf("%s/collapsedbayer.bmp",outputpath);
+        stbi_write_bmp(pearlspath, width, height, 1, collapsedcolumns);
+        contents = collapsedcolumns;
+#endif
 
 #if 0
         st = g_get_real_time();
@@ -1272,7 +1297,7 @@ int main(int argc ,char ** argv)
             guint64 et = g_get_real_time();
             guint64 exect = (et - st)/1000;
             g_print("execution time %lu \n",exect);
-            gchar * filename = g_strdup_printf("raws/%s_%lums.png","AHD",exect);
+            gchar * filename = g_strdup_printf("%s/%s_%lums.png",outputpath,"AHD",exect);
             stbi_write_png(filename,width, height, 3, rgb, 3*width);
             //g_file_set_contents(filename,rgb,width*height*3,&error);
             g_print("file processed %s\n",filename);
@@ -1285,7 +1310,7 @@ int main(int argc ,char ** argv)
             guint64 et = g_get_real_time();
             guint64 exect = (et - st)/1000;
             g_print("execution time %lu \n",exect);
-            gchar * filename = g_strdup_printf("raws/%s_%lums.png","VNG",exect);
+            gchar * filename = g_strdup_printf("%s/%s_%lums.png",outputpath,"VNG",exect);
             stbi_write_png(filename,width, height, 3, rgb, 3*width);
             //g_file_set_contents(filename,rgb,width*height*3,&error);
             g_print("file processed %s\n",filename);
@@ -1298,14 +1323,22 @@ int main(int argc ,char ** argv)
             guint64 et = g_get_real_time();
             guint64 exect = (et - st)/1000;
             g_print("execution time %lu \n",exect);
-            gchar * filename = g_strdup_printf("raws/%s_%lums.png","HQLinear",exect);
+            gchar * filename = g_strdup_printf("%s/%s_%lums.png",outputpath,"HQLinear",exect);
             stbi_write_png(filename,width, height, 3, rgb, 3*width);
             //g_file_set_contents(filename,rgb,width*height*3,&error);
             g_print("file processed %s\n",filename);
         }
         g_free(rgb);
 #endif
-
+#ifdef BMP
+        gchar * filename = g_strdup_printf("%s/bayer.bmp",outputpath);
+        stbi_write_bmp(filename, width, height, 1, contents);
+#endif
+    }
+    else 
+    {
+        g_print("filename %s length %ld doesn't match size %d\n",filepath,length,size);
+        return -7;
     }
     return 0;
 }
