@@ -29,25 +29,37 @@
 #define FULL_FRAME_HEIGHT (480 * 15)
 #define NUM_COMPONENTS 3
 
-void decode_tiles(gchar * folder, unsigned char ** bitstream_buffer,guint32 count,nvjpeg2kHandle_t nvjpeg2k_handle,nvjpeg2kStream_t nvjpeg2k_stream,nvjpeg2kDecodeState_t decode_state,void * decode_output,CUstream cstream)  // host or pinned memory
+struct decode_tile_params
+{
+	gchar * folder;
+	unsigned char ** bitstream_buffer;
+	guint32 count;
+	nvjpeg2kHandle_t nvjpeg2k_handle;
+	nvjpeg2kStream_t nvjpeg2k_stream;
+	nvjpeg2kDecodeState_t decode_state;
+	void * decode_output;
+	CUstream cstream;
+};
+
+void decode_tiles(struct decode_tile_params prms)  // host or pinned memory
 {
 		guint64 readtime = 0;
 		size_t pitch = 0;
 		nvjpeg2kImage_t output_image = {};
-		for(int32_t i = 0 ; i < count; ++i)
+		for(int32_t i = 0 ; i < prms.count; ++i)
 		{
-			gchar * path = g_strdup_printf("%s/tile_%d.j2k",folder,i+1) ;
+			gchar * path = g_strdup_printf("%s/tile_%d.j2k",prms.folder,i+1) ;
 			gsize length = 0;
 			GError * error = 0;
 			guint64 readstart = g_get_real_time();
-			gboolean gotfile = g_file_get_contents(path,(gchar**)&bitstream_buffer[i],&length,&error);
+			gboolean gotfile = g_file_get_contents(path,(gchar**)&prms.bitstream_buffer[i],&length,&error);
 			if(!gotfile || length == 0 || error != 0)
 				continue;
 			guint64 readend = g_get_real_time();
 			readtime += readend - readstart;
 			//g_print("readfile_time = %lu\n",readend - readstart);
 			// content of bitstream buffer should not be overwritten until the decoding is complete
-			nvjpeg2kStatus_t status = nvjpeg2kStreamParse(nvjpeg2k_handle, bitstream_buffer[i], length, 0, 0, nvjpeg2k_stream);
+			nvjpeg2kStatus_t status = nvjpeg2kStreamParse(prms.nvjpeg2k_handle, prms.bitstream_buffer[i], length, 0, 0, prms.nvjpeg2k_stream);
 			//g_print("status %d/%d length %lu \n",status ,NVJPEG2K_STATUS_SUCCESS,length);
 			// extract image info
 			//			nvjpeg2kImageInfo_t image_info;
@@ -78,7 +90,7 @@ void decode_tiles(gchar * folder, unsigned char ** bitstream_buffer,guint32 coun
 			nvjpeg2kStatus_t setrgbo =  nvjpeg2kDecodeParamsSetRGBOutput(decode_params, 1);
 			//g_print("set rgb output %d\n",setrgbo);
 
-			status = nvjpeg2kDecodeImage(nvjpeg2k_handle, decode_state, nvjpeg2k_stream,decode_params, &output_image, cstream); 
+			status = nvjpeg2kDecodeImage(prms.nvjpeg2k_handle, prms.decode_state, prms.nvjpeg2k_stream,decode_params, &output_image, prms.cstream); 
 			//g_print("decode status %d\n",status);
 
 			//cudaDeviceSynchronize();
@@ -86,7 +98,7 @@ void decode_tiles(gchar * folder, unsigned char ** bitstream_buffer,guint32 coun
 			int xOffset = (i % 16) * FRAME_PITCH;
 			int yOffset = (i / 16) * FRAME_HEIGHT;
 
-			err = cudaMemcpy2DAsync(decode_output + yOffset * FULL_FRAME_PITCH + xOffset, FULL_FRAME_PITCH ,decode_output_p,FRAME_PITCH,FRAME_PITCH,FRAME_HEIGHT,cudaMemcpyDeviceToDevice,cstream);
+			err = cudaMemcpy2DAsync(prms.decode_output + yOffset * FULL_FRAME_PITCH + xOffset, FULL_FRAME_PITCH ,decode_output_p,FRAME_PITCH,FRAME_PITCH,FRAME_HEIGHT,cudaMemcpyDeviceToDevice,prms.cstream);
 			cudaFree(decode_output_p);
 		}
 }
