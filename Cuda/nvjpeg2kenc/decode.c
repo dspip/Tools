@@ -37,12 +37,13 @@ struct decode_tile_params
 {
 	gchar * folder;
 	unsigned char ** bitstream_buffer;
+	guint64 * bitstream_length;
+	guint32 bitstream_buffer_count;
 	guint32 startx;
 	guint32 endx;
 	guint32 starty;
 	guint32 endy;
 	guint32 count;
-	guint32 stride_in_tiles;
 	nvjpeg2kHandle_t nvjpeg2k_handle;
 	nvjpeg2kStream_t nvjpeg2k_stream;
 	nvjpeg2kDecodeState_t decode_state;
@@ -50,73 +51,94 @@ struct decode_tile_params
 	CUstream cstream;
 };
 
+void fill_tile_bitstream_buffer(struct decode_tile_params *prms)
+{
+	guint64 readtime = 0;
+	prms->bitstream_buffer_count = 0;
+	for(int32_t x = prms->startx ; x < prms->endx; ++x)
+	{
+		for(int32_t y = prms->starty ; y < prms->endy ; ++y)
+		{
+			cudaDeviceSynchronize();
+			int32_t i = y * (WIDTH_TILES) + x;  
+			gchar * path = g_strdup_printf("%s/tile_%d.j2k",prms->folder,i+1) ;
+			//g_print("path %s x : %d y : %d\n",path,x,y);
+			gsize length = 0;
+			GError * error = 0;
+			guint64 readstart = g_get_real_time();
+			gboolean gotfile = g_file_get_contents(path,(gchar**)&(prms->bitstream_buffer[i]),&length,&error);
+			prms->bitstream_length[i] = length;
+			if(!gotfile || length == 0 || error != 0)
+			{
+				g_print("ERROR : %s \n",error->message);
+				continue;
+			}
+			guint64 readend = g_get_real_time();
+			readtime += readend - readstart;
+			prms->bitstream_buffer_count++;
+		}
+	}
+	g_print("filled tiles %d\n",prms->bitstream_buffer_count);
+}
+
+
 void decode_tiles(struct decode_tile_params prms)  // host or pinned memory
 {
-		guint64 readtime = 0;
-		size_t pitch = 0;
-		nvjpeg2kImage_t output_image = {};
-		for(int32_t x = prms.startx ; x < prms.endx; ++x)
+	guint64 readtime = 0;
+	size_t pitch = 0;
+	nvjpeg2kImage_t output_image = {};
+	for(int32_t x = prms.startx ; x < prms.endx; ++x)
+	{
+		for(int32_t y = prms.starty ; y < prms.endy ; ++y)
 		{
-			for(int32_t y = prms.starty ; y < prms.endy ; ++y)
-			{
-				cudaDeviceSynchronize();
-				int32_t i = y * (WIDTH_TILES) + x;  
-				gchar * path = g_strdup_printf("%s/tile_%d.j2k",prms.folder,i+1) ;
-				//g_print("path %s x : %d y : %d\n",path,x,y);
-				gsize length = 0;
-				GError * error = 0;
-				guint64 readstart = g_get_real_time();
-				gboolean gotfile = g_file_get_contents(path,(gchar**)&prms.bitstream_buffer[i],&length,&error);
-				if(!gotfile || length == 0 || error != 0)
-					continue;
-				guint64 readend = g_get_real_time();
-				readtime += readend - readstart;
-				//g_print("readfile_time = %lu\n",readend - readstart);
-				// content of bitstream buffer should not be overwritten until the decoding is complete
-				nvjpeg2kStatus_t status = nvjpeg2kStreamParse(prms.nvjpeg2k_handle, prms.bitstream_buffer[i], length, 0, 0, prms.nvjpeg2k_stream);
-				//g_print("status %d/%d length %lu \n",status ,NVJPEG2K_STATUS_SUCCESS,length);
-				// extract image info
-				//			nvjpeg2kImageInfo_t image_info;
-				//			nvjpeg2kStreamGetImageInfo(nvjpeg2k_stream, &image_info);
+			int32_t i = y * (WIDTH_TILES) + x;  
+			cudaDeviceSynchronize();
+			gsize length = 0;
+			// content of bitstream buffer should not be overwritten until the decoding is complete
+			nvjpeg2kStatus_t status = nvjpeg2kStreamParse(prms.nvjpeg2k_handle, prms.bitstream_buffer[i], prms.bitstream_length[i] , 0, 0, prms.nvjpeg2k_stream);
+			g_print("status %d/%d length %lu \n",status ,NVJPEG2K_STATUS_SUCCESS,length);
+			// extract image info
+			//			nvjpeg2kImageInfo_t image_info;
+			//			nvjpeg2kStreamGetImageInfo(nvjpeg2k_stream, &image_info);
 
-				// assuming the decoding of images with 8 bit precision, and 3 components
+			// assuming the decoding of images with 8 bit precision, and 3 components
 
-				//for (int c = 0; c < image_info.num_components; c++)
-				//{
-				//	nvjpeg2kStreamGetImageComponentInfo(nvjpeg2k_stream, &image_comp_info[c], c);
-				//}
-				//
+			//for (int c = 0; c < image_info.num_components; c++)
+			//{
+			//	nvjpeg2kStreamGetImageComponentInfo(nvjpeg2k_stream, &image_comp_info[c], c);
+			//}
+			//
 
-				void * decode_output_p =  NULL;
-				cudaError_t err = cudaMallocPitch(&decode_output_p,&pitch,FRAME_PITCH,FRAME_HEIGHT);
-				//g_print("second pitch %lu err %u\n",pitch,err);
+			void * decode_output_p =  NULL;
+			cudaError_t err = cudaMallocPitch(&decode_output_p,&pitch,FRAME_PITCH,FRAME_HEIGHT);
+			//g_print("second pitch %lu err %u\n",pitch,err);
 
-				size_t pitch_in_bytes[] = {FRAME_PITCH,320,320};
-				output_image.pixel_data = (void**)&decode_output_p;
-				output_image.pixel_type =  NVJPEG2K_UINT8;
-				output_image.pitch_in_bytes = pitch_in_bytes;
-				output_image.num_components = ARR_COUNT(pitch_in_bytes);
-				nvjpeg2kDecodeParams_t decode_params = {};
-				nvjpeg2kDecodeParamsCreate(&decode_params);
-				nvjpeg2kStatus_t sformat = nvjpeg2kDecodeParamsSetOutputFormat(decode_params, NVJPEG2K_FORMAT_INTERLEAVED);
-				//g_print("set output format %d\n",sformat);
+			size_t pitch_in_bytes[] = {FRAME_PITCH,320,320};
+			output_image.pixel_data = (void**)&decode_output_p;
+			output_image.pixel_type =  NVJPEG2K_UINT8;
+			output_image.pitch_in_bytes = pitch_in_bytes;
+			output_image.num_components = ARR_COUNT(pitch_in_bytes);
+			nvjpeg2kDecodeParams_t decode_params = {};
+			nvjpeg2kDecodeParamsCreate(&decode_params);
+			nvjpeg2kStatus_t sformat = nvjpeg2kDecodeParamsSetOutputFormat(decode_params, NVJPEG2K_FORMAT_INTERLEAVED);
+			//g_print("set output format %d\n",sformat);
 
-				nvjpeg2kStatus_t setrgbo =  nvjpeg2kDecodeParamsSetRGBOutput(decode_params, 1);
-				//g_print("set rgb output %d\n",setrgbo);
+			nvjpeg2kStatus_t setrgbo =  nvjpeg2kDecodeParamsSetRGBOutput(decode_params, 1);
+			//g_print("set rgb output %d\n",setrgbo);
 
-				status = nvjpeg2kDecodeImage(prms.nvjpeg2k_handle, prms.decode_state, prms.nvjpeg2k_stream,decode_params, &output_image, prms.cstream); 
-				//g_print("decode status %d\n",status);
+			status = nvjpeg2kDecodeImage(prms.nvjpeg2k_handle, prms.decode_state, prms.nvjpeg2k_stream,decode_params, &output_image, prms.cstream); 
+			//g_print("decode status %d\n",status);
 
 
-				int xOffset = (i % 16) * FRAME_PITCH;
-				int yOffset = (i / 16) * FRAME_HEIGHT;
+			int xOffset = (i % 16) * FRAME_PITCH;
+			int yOffset = (i / 16) * FRAME_HEIGHT;
 
-				err = cudaMemcpy2DAsync(prms.decode_output + yOffset * FULL_FRAME_PITCH + xOffset, FULL_FRAME_PITCH ,decode_output_p,FRAME_PITCH,FRAME_PITCH,FRAME_HEIGHT,cudaMemcpyDeviceToDevice,prms.cstream);
+			err = cudaMemcpy2DAsync(prms.decode_output + yOffset * FULL_FRAME_PITCH + xOffset, FULL_FRAME_PITCH ,decode_output_p,FRAME_PITCH,FRAME_PITCH,FRAME_HEIGHT,cudaMemcpyDeviceToDevice,prms.cstream);
 
-				//cudaDeviceSynchronize();
-				cudaFreeAsync(decode_output_p,prms.cstream);
-			}
+			//cudaDeviceSynchronize();
+			cudaFreeAsync(decode_output_p,prms.cstream);
 		}
+	}
 }
 
 int main(int argc, char** argv )
@@ -242,6 +264,7 @@ int main(int argc, char** argv )
 
 	size_t length;
 	unsigned char *bitstream_buffer[TILE_COUNT];  // host or pinned memory
+	guint64 bitstream_length[TILE_COUNT];  // host or pinned memory
 	guint64 starttime = g_get_real_time();
 	cudaStream_t cstream = {};
 	cudaStreamCreate(&cstream);
@@ -260,6 +283,7 @@ int main(int argc, char** argv )
 	for(int32_t ii = 0 ; ii < ARR_COUNT(folders); ++ii)
 	{
 		struct decode_tile_params dtparams = {}; 
+		dtparams.bitstream_length  = bitstream_length;
 		dtparams.bitstream_buffer = bitstream_buffer;
 		dtparams.count = ARR_COUNT(folders);
 		dtparams.nvjpeg2k_handle = nvjpeg2k_handle;
@@ -272,12 +296,14 @@ int main(int argc, char** argv )
 		dtparams.starty = 0;
 		dtparams.endy = 15;
 		dtparams.count = 240;
-		dtparams.stride_in_tiles = 2;
+
 
 		guint64 startframetime = g_get_real_time(); 
+		fill_tile_bitstream_buffer(&dtparams);
 		decode_tiles(dtparams);
 		dtparams.startx = 8;
 		dtparams.endx = 16; 
+		fill_tile_bitstream_buffer(&dtparams);
 		decode_tiles(dtparams);
 		g_print("time per frame %lu\n", (g_get_real_time() - startframetime)/1000);
 		//cudaDeviceSynchronize();
