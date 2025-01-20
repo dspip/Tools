@@ -82,7 +82,7 @@ void fill_tile_bitstream_buffer(struct decode_tile_params *prms)
 }
 
 
-void decode_tiles(struct decode_tile_params prms)  // host or pinned memory
+void nu_j2k_decode_tiles(struct decode_tile_params prms)  // host or pinned memory
 {
 	guint64 readtime = 0;
 	size_t pitch = 0;
@@ -128,7 +128,6 @@ void decode_tiles(struct decode_tile_params prms)  // host or pinned memory
 
 			status = nvjpeg2kDecodeImage(prms.nvjpeg2k_handle, prms.decode_state, prms.nvjpeg2k_stream,decode_params, &output_image, prms.cstream); 
 			//g_print("decode status %d\n",status);
-
 
 			int xOffset = (i % 16) * FRAME_PITCH;
 			int yOffset = (i / 16) * FRAME_HEIGHT;
@@ -297,14 +296,13 @@ int main(int argc, char** argv )
 		dtparams.endy = 15;
 		dtparams.count = 240;
 
-
 		guint64 startframetime = g_get_real_time(); 
 		fill_tile_bitstream_buffer(&dtparams);
-		decode_tiles(dtparams);
+		nu_j2k_decode_tiles(dtparams);
 		dtparams.startx = 8;
 		dtparams.endx = 16; 
 		fill_tile_bitstream_buffer(&dtparams);
-		decode_tiles(dtparams);
+		nu_j2k_decode_tiles(dtparams);
 		g_print("time per frame %lu\n", (g_get_real_time() - startframetime)/1000);
 		//cudaDeviceSynchronize();
 		//g_usleep(600 * 1000);
