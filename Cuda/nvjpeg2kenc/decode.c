@@ -39,6 +39,8 @@ struct decode_tile_params
 	unsigned char ** bitstream_buffer;
 	guint64 * bitstream_length;
 	guint32 bitstream_buffer_count;
+	guint32 startindex;
+	guint32 endindex;
 	guint32 startx;
 	guint32 endx;
 	guint32 starty;
@@ -48,9 +50,34 @@ struct decode_tile_params
 	nvjpeg2kStream_t nvjpeg2k_stream;
 	nvjpeg2kDecodeState_t decode_state;
 	void * decode_output;
+	void * decode_output_p;
 	CUstream cstream;
 };
 
+void fill_tile_bitstream_buffer_index_based (struct decode_tile_params *prms)
+{
+	guint64 readtime = 0;
+	prms->bitstream_buffer_count = 0;
+	for(int32_t i = prms->startindex; i < prms->endindex; ++i )
+	{
+			gchar * path = g_strdup_printf("%s/tile_%d.j2k",prms->folder,i+1) ;
+			//g_print("path %s x : %d y : %d\n",path,x,y);
+			gsize length = 0;
+			GError * error = 0;
+			guint64 readstart = g_get_real_time();
+			gboolean gotfile = g_file_get_contents(path,(gchar**)&(prms->bitstream_buffer[prms->bitstream_buffer_count]),&length,&error);
+			prms->bitstream_length[prms->bitstream_buffer_count] = length;
+			if(!gotfile || length == 0 || error != 0)
+			{
+				g_print("ERROR : %s \n",error->message);
+				continue;
+			}
+			guint64 readend = g_get_real_time();
+			readtime += readend - readstart;
+			prms->bitstream_buffer_count++;
+	}
+	//g_print("filled tiles %d\n",prms->bitstream_buffer_count);
+}
 void fill_tile_bitstream_buffer(struct decode_tile_params *prms)
 {
 	guint64 readtime = 0;
@@ -79,6 +106,69 @@ void fill_tile_bitstream_buffer(struct decode_tile_params *prms)
 		}
 	}
 	g_print("filled tiles %d\n",prms->bitstream_buffer_count);
+}
+void nu_j2k_decode_tiles_index_based(struct decode_tile_params prms)  // host or pinned memory
+{
+	guint64 readtime = 0;
+	size_t pitch = 0;
+	nvjpeg2kImage_t output_image = {};
+	uint32_t count = 0;
+	for(int32_t i = prms.startindex; i < prms.endindex; ++i)
+	{
+		gsize length = 0;
+		//uint64_t t = g_get_real_time();
+		nvjpeg2kStatus_t status = nvjpeg2kStreamParse(prms.nvjpeg2k_handle, prms.bitstream_buffer[count], prms.bitstream_length[count] , 0, 0, prms.nvjpeg2k_stream);
+		//g_print("status %d/%d length %lu time = %lu\n",status ,NVJPEG2K_STATUS_SUCCESS,length,g_get_real_time()- t);
+		// extract image info
+		//			nvjpeg2kImageInfo_t image_info;
+		//			nvjpeg2kStreamGetImageInfo(nvjpeg2k_stream, &image_info);
+
+		// assuming the decoding of images with 8 bit precision, and 3 components
+
+		//for (int c = 0; c < image_info.num_components; c++)
+		//{
+		//	nvjpeg2kStreamGetImageComponentInfo(nvjpeg2k_stream, &image_comp_info[c], c);
+		//}
+		//
+
+		void * decode_output_p =  prms.decode_output_p;
+		cudaError_t err;
+		//cudaError_t err = cudaMallocPitch(&decode_output_p,&pitch,FRAME_PITCH,FRAME_HEIGHT);
+		//g_usleep(1000*1000);
+		//g_print("second pitch %lu err %u\n",pitch,err);
+
+		size_t pitch_in_bytes[] = {FRAME_PITCH,320,320};
+		output_image.pixel_data = (void**)&decode_output_p;
+		output_image.pixel_type =  NVJPEG2K_UINT8;
+		output_image.pitch_in_bytes = pitch_in_bytes;
+		output_image.num_components = ARR_COUNT(pitch_in_bytes);
+		nvjpeg2kDecodeParams_t decode_params = {};
+		nvjpeg2kDecodeParamsCreate(&decode_params);
+		nvjpeg2kStatus_t sformat = nvjpeg2kDecodeParamsSetOutputFormat(decode_params, NVJPEG2K_FORMAT_INTERLEAVED);
+		//g_print("set output format %d\n",sformat);
+
+		nvjpeg2kStatus_t setrgbo =  nvjpeg2kDecodeParamsSetRGBOutput(decode_params, 1);
+		//g_print("set rgb output %d\n",setrgbo);
+
+		status = nvjpeg2kDecodeImage(prms.nvjpeg2k_handle, prms.decode_state, prms.nvjpeg2k_stream,decode_params, &output_image, prms.cstream); 
+		//g_print("decode status %d\n",status);
+
+		int xOffset = (i % 16) * FRAME_PITCH;
+		int yOffset = (i / 16) * FRAME_HEIGHT;
+
+		err = cudaMemcpy2DAsync(prms.decode_output + yOffset * FULL_FRAME_PITCH + xOffset, FULL_FRAME_PITCH ,decode_output_p,FRAME_PITCH,FRAME_PITCH,FRAME_HEIGHT,cudaMemcpyDeviceToDevice,prms.cstream);
+
+		//cudaFree(decode_output_p);
+		//cudaFreeAsync(decode_output_p,prms.cstream);
+		//cudaDeviceSynchronize();
+		//g_free(&prms.bitstream_buffer[count]);
+		//nvjpeg2kDecodeParamsDestroy(decode_params);
+		count++;
+	}
+	//nvjpeg2kDecodeStateDestroy(prms.decode_state);
+	//nvjpeg2kDestroy(prms.nvjpeg2k_handle);
+	//cudaStreamSynchronize(prms.cstream);
+	//cudaDeviceSynchronize();
 }
 
 
@@ -127,7 +217,7 @@ void nu_j2k_decode_tiles(struct decode_tile_params prms)  // host or pinned memo
 			//g_print("set rgb output %d\n",setrgbo);
 
 			status = nvjpeg2kDecodeImage(prms.nvjpeg2k_handle, prms.decode_state, prms.nvjpeg2k_stream,decode_params, &output_image, prms.cstream); 
-			//g_print("decode status %d\n",status);
+			g_print("decode status %d\n",status);
 
 			int xOffset = (i % 16) * FRAME_PITCH;
 			int yOffset = (i / 16) * FRAME_HEIGHT;
@@ -135,7 +225,8 @@ void nu_j2k_decode_tiles(struct decode_tile_params prms)  // host or pinned memo
 			err = cudaMemcpy2DAsync(prms.decode_output + yOffset * FULL_FRAME_PITCH + xOffset, FULL_FRAME_PITCH ,decode_output_p,FRAME_PITCH,FRAME_PITCH,FRAME_HEIGHT,cudaMemcpyDeviceToDevice,prms.cstream);
 
 			//cudaDeviceSynchronize();
-			cudaFreeAsync(decode_output_p,prms.cstream);
+			//cudaFree(decode_output_p,prms.cstream);
+			cudaFree(decode_output_p);
 		}
 	}
 }
@@ -265,7 +356,7 @@ int main(int argc, char** argv )
 	unsigned char *bitstream_buffer[TILE_COUNT];  // host or pinned memory
 	guint64 bitstream_length[TILE_COUNT];  // host or pinned memory
 	guint64 starttime = g_get_real_time();
-	cudaStream_t cstream = {};
+	cudaStream_t cstream;
 	cudaStreamCreate(&cstream);
 
 	nvjpeg2kImageComponentInfo_t image_comp_info[NUM_COMPONENTS] = {{640,480},{320,240},{320,240}};
@@ -275,11 +366,91 @@ int main(int argc, char** argv )
 	size_t pitch = 0;
 	cudaError_t err = cudaMallocPitch((void**)&decode_output, &pitch, FULL_FRAME_PITCH, FULL_FRAME_HEIGHT);
 	g_print("pitch full frame %lu err %u ptr %p\n",pitch,err,decode_output);
-	//cudaMallocAsync((void**)&decode_output,  FULL_FRAME_SIZE ,cstream);
+	//cudaMallocAsync((void**)
+	//decode_output,  FULL_FRAME_SIZE ,cstream);
 	guint64 readtime = 0;
+	const uint32_t BATCH_SIZE = 240;
+	void ** decode_output_ps = (void**)malloc(BATCH_SIZE* sizeof(void **));  
+	nvjpeg2kHandle_t *nvjpeg2k_handles = (nvjpeg2kHandle_t *) malloc(BATCH_SIZE* sizeof(nvjpeg2kHandle_t));
+	nvjpeg2kStream_t * nvjpeg2k_streams = (nvjpeg2kStream_t*) malloc(BATCH_SIZE* sizeof(nvjpeg2kStream_t));
+	nvjpeg2kDecodeState_t * nvjpeg2k_decode_states = (nvjpeg2kDecodeState_t*) malloc(BATCH_SIZE* sizeof(nvjpeg2kDecodeState_t));
+	cudaStream_t cstreams[BATCH_SIZE];
+
+	for(int32_t kk = 0 ; kk < BATCH_SIZE ; kk++)
+	{
+		size_t pitch = 0;
+		cudaError_t err = cudaMallocPitch(&decode_output_ps[kk],&pitch,FRAME_PITCH,FRAME_HEIGHT);
+
+		nvjpeg2kCreateSimple(&nvjpeg2k_handles[kk]);
+		nvjpeg2kStreamCreate(&nvjpeg2k_streams[kk]);
+		nvjpeg2kDecodeStateCreate(nvjpeg2k_handles[kk],&nvjpeg2k_decode_states[kk]);
+		cudaStreamCreate(&cstreams[kk]);
+	}
 
 	
 	for(int32_t ii = 0 ; ii < ARR_COUNT(folders); ++ii)
+	//for(int32_t ii = 0 ; ii < 10; ++ii)
+	{
+
+		const uint32_t TILES_PER_BATCH = TILE_COUNT/BATCH_SIZE;
+		guint64 startframetime = g_get_real_time(); 
+		uint8_t ** bitstream_buffer = (uint8_t **)malloc(sizeof(uint8_t *) * TILES_PER_BATCH);
+		uint64_t * bitstream_length = (uint64_t *)malloc(sizeof(uint64_t)* TILES_PER_BATCH);
+		uint32_t cstreamcount = 0;
+		
+		for(int32_t jj = 0 ; jj < BATCH_SIZE ; ++jj)
+		{
+			struct decode_tile_params dtparams = {}; 
+			dtparams.bitstream_length  = bitstream_length;
+			dtparams.bitstream_buffer = bitstream_buffer;
+			dtparams.count = ARR_COUNT(folders);
+			dtparams.nvjpeg2k_handle = nvjpeg2k_handles[jj];
+			dtparams.nvjpeg2k_stream = nvjpeg2k_streams[jj];
+			dtparams.decode_state = nvjpeg2k_decode_states[jj];
+			dtparams.folder = folders[ii]; 
+			dtparams.decode_output_p = decode_output_ps[jj];
+
+			//nvjpeg2kCreateSimple(&dtparams.nvjpeg2k_handle);
+			//nvjpeg2kStreamCreate(&dtparams.nvjpeg2k_stream);
+			//nvjpeg2kDecodeStateCreate(nvjpeg2k_handle,&dtparams.decode_state);
+			//cudaStreamCreateWithFlags(&dtparams.cstream,cudaStreamNonBlocking);
+			dtparams.cstream = cstreams[jj];
+		    //cstreams[cstreamcount++] = dtparams.cstream;
+
+			dtparams.decode_output = decode_output; 
+			
+			uint32_t starttile = jj * TILES_PER_BATCH;
+			uint32_t endtile = (jj+1) * TILES_PER_BATCH;
+			dtparams.startindex = starttile;
+			dtparams.endindex= endtile;
+
+			fill_tile_bitstream_buffer_index_based(&dtparams);
+			nu_j2k_decode_tiles_index_based(dtparams);
+			//g_print("time per frame %lu\n", (g_get_real_time() - startframetime)/1000);
+		}
+		g_free(bitstream_length);
+		g_free(bitstream_buffer[0]);
+		g_free(bitstream_buffer);
+		for(int32_t cs = 0; cs<cstreamcount;cs++)
+		{
+			cudaStreamSynchronize(cstreams[cs]);
+		}
+		//cudaDeviceSynchronize();
+		//g_usleep(600 * 1000);
+
+		void * decode_output_copy;
+		//cudaMalloc(&decode_output_copy,FULL_FRAME_SIZE);
+		//cudaMemcpy(decode_output_copy,decode_output,FULL_FRAME_SIZE,cudaMemcpyDeviceToDevice);
+
+		//cudaMallocHost(&decode_output_copy,FULL_FRAME_SIZE);
+		//cudaMemcpyAsync(decode_output_copy,decode_output,FULL_FRAME_SIZE,cudaMemcpyDeviceToHost,cstream);
+
+		//dg_push_frame(decode_output,FULL_FRAME_SIZE);
+		//cudaFree(decode_output_copy);
+		g_print("after sync and copy time per frame %lu\n", (g_get_real_time() - startframetime)/1000);
+		readtime = 0;
+	}
+	/*for(int32_t ii = 0 ; ii < ARR_COUNT(folders); ++ii)
 	{
 		struct decode_tile_params dtparams = {}; 
 		dtparams.bitstream_length  = bitstream_length;
@@ -319,7 +490,11 @@ int main(int argc, char** argv )
 		g_print("after sync and copy time per frame %lu\n", (g_get_real_time() - startframetime)/1000);
 		readtime = 0;
 	}
-	g_print("time %lu\n", (g_get_real_time() - starttime)/1000);
+	*/
+	uint64_t dt = (g_get_real_time() - starttime)/1000;
+	g_print("time %lu\n", dt);
+	g_print("time per full frame %lu\n", dt/ARR_COUNT(folders));
+	g_usleep(1000 * 1000 * 3);
 	dg_deinitialize();
 	//g_usleep(1000*1000*10);
 
