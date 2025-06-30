@@ -51,9 +51,11 @@ nv_of_simple_context NvOFSimpleInit(uint32_t width, uint32_t height,
 		NV_OF_CUDA_BUFFER_TYPE inputBufferType,
 		NV_OF_CUDA_BUFFER_TYPE  outputBufferType,
 		NV_OF_PERF_LEVEL perfPreset,
-		int gpuId 
+		int gpuId,
+		int gridSize
 		)
 {
+        CUDA_DRVAPI_CALL(cuInit(0));
 	nv_of_simple_context context = {};
         CUdevice cuDevice = 0;
         CUDA_DRVAPI_CALL(cuDeviceGet(&cuDevice, gpuId));
@@ -66,6 +68,38 @@ nv_of_simple_context NvOFSimpleInit(uint32_t width, uint32_t height,
 	CUDA_DRVAPI_CALL(cuStreamCreate(&context.outputStream, CU_STREAM_DEFAULT));
 
 	context.nvOpticalFlow = NvOFCuda::Create(context.cuContext, width, height,ofBufFormatp , inputBufferType, outputBufferType, NV_OF_MODE_OPTICALFLOW, perfPreset, context.inputStream, context.outputStream);
+
+    uint32_t nScaleFactor = 1;
+    uint32_t hwGridSize;
+    if (!context.nvOpticalFlow->CheckGridSize(gridSize))
+    {
+        if (!context.nvOpticalFlow->GetNextMinGridSize(gridSize, hwGridSize))
+        {
+            throw std::runtime_error("Invalid parameter");
+        }
+        else
+        {
+            nScaleFactor = hwGridSize / gridSize;
+        }
+    }
+    else
+    {
+        hwGridSize = gridSize;
+    }
+    //TODO(LEV) calc grid size optimal to hw
+    //
+    int hintGridSize = 256;
+    bool bEnableRoi = false;
+    bool enableExternalHints = false;
+	context.nvOpticalFlow->Init(hwGridSize, hintGridSize, enableExternalHints, bEnableRoi);
+
+	const uint32_t NUM_INPUT_BUFFERS = 2;
+	const uint32_t NUM_OUTPUT_BUFFERS = NUM_INPUT_BUFFERS - 1;
+	//TODO(LEV) fix this shit to 
+	/*
+        context.inputBufferA = context.nvOpticalFlow->CreateBuffers(NV_OF_BUFFER_USAGE_INPUT, NUM_INPUT_BUFFERS);
+        context.outputBuffer = context.nvOpticalFlow->CreateBuffers(NV_OF_BUFFER_USAGE_OUTPUT, NUM_OUTPUT_BUFFERS);
+	*/
 	return context;
 }
 
