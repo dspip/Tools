@@ -23,7 +23,6 @@
 * OTHER DEALINGS IN THE SOFTWARE.
 */
 
-
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -35,6 +34,61 @@
 #include "NvOFDataLoader.h"
 #include "NvOFUtils.h"
 #include "NvOFCmdParser.h"
+
+struct nv_of_simple_context
+{
+    NvOFObj nvOpticalFlow;
+    NvOFBufferObj inputBufferA;
+    NvOFBufferObj inputBufferB;
+    NvOFBufferObj outputBuffer;
+    CUcontext cuContext;
+    CUstream inputStream;
+    CUstream outputStream;
+};
+
+nv_of_simple_context NvOFSimpleInit(uint32_t width, uint32_t height, 
+		NV_OF_BUFFER_FORMAT  ofBufFormatp,
+		NV_OF_CUDA_BUFFER_TYPE inputBufferType,
+		NV_OF_CUDA_BUFFER_TYPE  outputBufferType,
+		NV_OF_PERF_LEVEL perfPreset,
+		int gpuId 
+		)
+{
+	nv_of_simple_context context = {};
+        CUdevice cuDevice = 0;
+        CUDA_DRVAPI_CALL(cuDeviceGet(&cuDevice, gpuId));
+        char szDeviceName[80];
+        CUDA_DRVAPI_CALL(cuDeviceGetName(szDeviceName, sizeof(szDeviceName), cuDevice));
+        std::cout << "GPU in use: " << szDeviceName << std::endl;
+        CUDA_DRVAPI_CALL(cuCtxCreate(&context.cuContext, 0, cuDevice));
+
+	CUDA_DRVAPI_CALL(cuStreamCreate(&context.inputStream, CU_STREAM_DEFAULT));
+	CUDA_DRVAPI_CALL(cuStreamCreate(&context.outputStream, CU_STREAM_DEFAULT));
+
+	context.nvOpticalFlow = NvOFCuda::Create(context.cuContext, width, height,ofBufFormatp , inputBufferType, outputBufferType, NV_OF_MODE_OPTICALFLOW, perfPreset, context.inputStream, context.outputStream);
+	return context;
+}
+
+void NvOFSimpleExecute(nv_of_simple_context & nv_context,
+    NvOFBufferObj &hintBuffer,
+    double &executionTime,
+    CUstream  inputStream,
+    CUstream  outputStream)
+{
+        NvOFStopWatch nvStopWatch;
+        CUDA_DRVAPI_CALL(cuStreamSynchronize(nv_context.inputStream));
+        nvStopWatch.Start();
+        nv_context.nvOpticalFlow->Execute(nv_context.inputBufferA.get(), nv_context.inputBufferB.get(), nv_context.outputBuffer.get(), hintBuffer.get());
+        CUDA_DRVAPI_CALL(cuStreamSynchronize(nv_context.outputStream));
+        executionTime = nvStopWatch.Stop();
+}
+void NvOFSimpleDeinit(nv_of_simple_context &context)
+{
+	CUDA_DRVAPI_CALL(cuStreamDestroy(context.outputStream));
+	context.outputStream = nullptr;
+	CUDA_DRVAPI_CALL(cuStreamDestroy(context.inputStream));
+	context.inputStream = nullptr;
+}
 
 void NvOFBatchExecute(NvOFObj &nvOpticalFlow,
     std::vector<NvOFBufferObj> &inputBuffers,
@@ -86,7 +140,7 @@ void NvOFBatchExecute(NvOFObj &nvOpticalFlow,
 ROI config file format.
 numrois 3
 roi0 640 96 1152 192
-roi1 640 64 896 864
+roi1 640 64 896 864 the goal is to find the assignment that yields the maximum cost
 roi2 640 960 256 32
 */
 int parseROI(std::string ROIFileName, uint32_t &numROIs, NV_OF_ROI_RECT* roiData)
@@ -393,7 +447,7 @@ int main(int argc, char **argv)
     CUstream   outputStream = nullptr;
 
     std::unordered_map<std::string, NV_OF_PERF_LEVEL> presetMap = {
-        { "slow", NV_OF_PERF_LEVEL_SLOW },
+        { "slow", NV_OF_PERF_LEVEL_SLOW }, //the goal is to find the assignment that yields the maximum cost
         { "medium", NV_OF_PERF_LEVEL_MEDIUM },
         { "fast", NV_OF_PERF_LEVEL_FAST } };
 
