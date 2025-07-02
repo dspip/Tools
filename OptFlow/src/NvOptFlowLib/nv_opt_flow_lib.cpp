@@ -32,7 +32,6 @@
 #include <sstream>
 #include <iterator>
 #include "NvOFCuda.h"
-#include "NvOFCmdParser.h"
 
 #ifdef linux 
 #define DLL extern "C"
@@ -120,20 +119,18 @@ nv_of_simple_context NvOFSimpleInit(uint32_t width, uint32_t height,
 	return context;
 }
 
-void NvOFSimpleExecute(nv_of_simple_context & nv_context,
-    NvOFBufferObj &hintBuffer,
-    double &executionTime,
-    CUstream  inputStream,
-    CUstream  outputStream)
+void NvOFSimpleExecute(nv_of_simple_context & nv_context, NvOFBufferObj * hintBuffer, double &executionTime)
 {
         NvOFStopWatch nvStopWatch;
         CUDA_DRVAPI_CALL(cuStreamSynchronize(nv_context.inputStream));
         nvStopWatch.Start();
-        nv_context.nvOpticalFlow->Execute(nv_context.inputBuffers[nv_context.first_buf_id].get(), nv_context.inputBuffers[nv_context.second_buf_id].get(), nv_context.outputBuffers[0].get(), hintBuffer.get());
+        //nv_context.nvOpticalFlow->Execute(nv_context.inputBuffers[nv_context.first_buf_id].get(), nv_context.inputBuffers[nv_context.second_buf_id].get(), nv_context.outputBuffers[0].get(), hintBuffer.get());
+        nv_context.nvOpticalFlow->Execute(nv_context.inputBuffers[nv_context.first_buf_id].get(), nv_context.inputBuffers[nv_context.second_buf_id].get(), nv_context.outputBuffers[0].get(),NULL );
         CUDA_DRVAPI_CALL(cuStreamSynchronize(nv_context.outputStream));
         executionTime = nvStopWatch.Stop();
         l_swap(nv_context.first_buf_id,nv_context.second_buf_id);
 }
+
 void NvOFSimpleDeinit(nv_of_simple_context &context)
 {
 	CUDA_DRVAPI_CALL(cuStreamDestroy(context.outputStream));
@@ -162,8 +159,6 @@ DLL void * nv_opt_flow_get_context(uint32_t w, uint32_t h, NV_OF_BUFFER_FORMAT b
                                                        Legacy 32-bit cost buffer format is also planned to be deprecated in future. 
     NV_OF_BUFFER_FORMAT_UINT8,                    < 8-bit Cost buffer format for optical flow vector / stereo disparity. 
     NV_OF_BUFFER_FORMAT_MAX
-} NV_OF_BUFFER_FORMAT;
-
 */
 
     /* buffer types 
@@ -179,5 +174,14 @@ DLL void * nv_opt_flow_get_context(uint32_t w, uint32_t h, NV_OF_BUFFER_FORMAT b
     */
     g_nv_of_context = NvOFSimpleInit(w,h,bf,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR ,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR, NV_OF_PERF_LEVEL_FAST,0,0 );
     return (void*) (&g_nv_of_context);
+}
+
+DLL void nv_opt_flow_get_flow_field(void * contextptr, uint8_t * &data, uint8_t * out_data)
+{
+	nv_of_simple_context * context = (nv_of_simple_context *) contextptr;
+	context->inputBuffers[context->first_buf_id]->UploadData(data,NULL,NULL);
+	double executionTime = 0;
+	NvOFSimpleExecute(*context,NULL,executionTime);
+	context->outputBuffers[0]->DownloadData(out_data);
 }
 
