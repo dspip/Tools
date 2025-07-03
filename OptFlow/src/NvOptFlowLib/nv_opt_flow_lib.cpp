@@ -86,12 +86,14 @@ nv_of_simple_context NvOFSimpleInit(uint32_t width, uint32_t height,
 
 	context.nvOpticalFlow = NvOFCuda::Create(context.cuContext, width, height,ofBufFormatp , inputBufferType, outputBufferType, NV_OF_MODE_OPTICALFLOW, perfPreset, context.inputStream, context.outputStream);
 
+    std::cout << "nv optical flow created " << context.nvOpticalFlow << std::endl;
     uint32_t nScaleFactor = 1;
     uint32_t hwGridSize;
     if (!context.nvOpticalFlow->CheckGridSize(gridSize))
     {
         if (!context.nvOpticalFlow->GetNextMinGridSize(gridSize, hwGridSize))
         {
+            std::cout << "grid sizes "<< gridSize << " " << hwGridSize;
             throw std::runtime_error("Invalid parameter");
         }
         else
@@ -172,7 +174,8 @@ DLL void * nv_opt_flow_get_context(uint32_t w, uint32_t h, NV_OF_BUFFER_FORMAT b
         NV_OF_PERF_LEVEL_MEDIUM 
         NV_OF_PERF_LEVEL_FAST ;
     */
-    g_nv_of_context = NvOFSimpleInit(w,h,bf,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR ,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR, NV_OF_PERF_LEVEL_FAST,0,0 );
+    uint32_t gridSize = 1;
+    g_nv_of_context = NvOFSimpleInit(w,h,bf,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR ,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR, NV_OF_PERF_LEVEL_FAST,0,gridSize);
     return (void*) (&g_nv_of_context);
 }
 
