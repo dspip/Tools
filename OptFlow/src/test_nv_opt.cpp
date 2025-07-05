@@ -59,7 +59,8 @@ GstMapInfo GetBufferDataRead(GstBuffer * buffer, void** data, gint64 *size)
 static gint64 thresh = 200;
 static gint64 startTime;
 static void * nv_opt_context;
-uint16_t flow_data[1920*1080*4];
+//int16_t flow_data[1920*1080*1];
+int16_t flow_data[480 * 270 * 2];
 static GstElement * viewappsrc = NULL;
 static GstCaps * viewcaps = NULL;
 
@@ -81,6 +82,7 @@ GstFlowReturn OnAppSample(GstElement* appsink, gpointer data)
         nv_opt_flow_get_flow_field(nv_opt_context,data,(uint8_t*)flow_data);
         if(viewappsrc)
         {
+            /*
             for (size_t y = 0; y < 1080; y++)
             {
                 for (size_t x = 0; x < 1920; x++)
@@ -98,7 +100,7 @@ GstFlowReturn OnAppSample(GstElement* appsink, gpointer data)
 						*dy = 0;
                     }
                 }
-            }
+            }*/
             GstBuffer * flowbuffer = gst_buffer_new_memdup(flow_data,sizeof(flow_data));
             //GstBuffer * flowbuffer = gst_buffer_new_memdup(flow_data,640 * 480 * 3);
             GstFlowReturn ret;
@@ -131,7 +133,7 @@ int main(int argc , char ** argv)
 	GError * err = NULL;
 
 	startTime = g_get_real_time();
-	const gchar * pipestr = "filesrc location=test.mkv ! decodebin ! videoconvert ! video/x-raw,format=NV12 ! appsink emit-signals=true name=asink";
+	const gchar * pipestr = "filesrc location=test.mkv ! decodebin ! videoconvert ! video/x-raw,format=NV12 ! tee name=t ! queue ! appsink emit-signals=true name=asink t. ! queue ! autovideosink sync=false";
 
 	GstElement * pipe = gst_parse_launch(pipestr,&err);
 	GstBus * bus = NULL;
@@ -149,11 +151,11 @@ int main(int argc , char ** argv)
 	    bus = gst_element_get_bus(pipe);
 	    gst_bus_add_watch(bus,bus_call ,loop);
 	    gst_element_set_state (pipe, GST_STATE_PLAYING);
-        GstElement * viewpipe = gst_parse_launch("appsrc name=asrc format=time is-live=true ! video/x-raw,format=ARGB,width=1920,height=1080 ! videoconvert ! autovideosink sync=false",&err);
+        GstElement * viewpipe = gst_parse_launch("appsrc name=asrc format=time is-live=true ! video/x-raw,format=ARGB,width=480,height=270 ! videoconvert ! autovideosink sync=false",&err);
 
 	    viewappsrc = gst_bin_get_by_name(GST_BIN(viewpipe),"asrc");
-        uint32_t floww = 1920;
-        uint32_t flowh = 1080;
+        uint32_t floww = 480;
+        uint32_t flowh = 270;
         viewcaps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "ARGB", "width", G_TYPE_INT, floww, "height", G_TYPE_INT, flowh, NULL);
         gst_element_set_state(viewpipe,GST_STATE_PLAYING);
 

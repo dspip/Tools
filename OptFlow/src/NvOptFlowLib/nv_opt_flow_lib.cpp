@@ -117,6 +117,8 @@ nv_of_simple_context NvOFSimpleInit(uint32_t width, uint32_t height,
 	
     context.inputBuffers = context.nvOpticalFlow->CreateBuffers(NV_OF_BUFFER_USAGE_INPUT, NUM_INPUT_BUFFERS);
     context.outputBuffers = context.nvOpticalFlow->CreateBuffers(NV_OF_BUFFER_USAGE_OUTPUT, NUM_OUTPUT_BUFFERS);
+    context.first_buf_id = 0;
+    context.second_buf_id = 1;
 
 	return context;
 }
@@ -175,7 +177,7 @@ DLL void * nv_opt_flow_get_context(uint32_t w, uint32_t h, NV_OF_BUFFER_FORMAT b
         NV_OF_PERF_LEVEL_FAST ;
     */
     uint32_t gridSize = 1;
-    g_nv_of_context = NvOFSimpleInit(w,h,bf,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR ,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR, NV_OF_PERF_LEVEL_FAST,0,gridSize);
+    g_nv_of_context = NvOFSimpleInit(w,h,bf,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR ,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR, NV_OF_PERF_LEVEL_SLOW,0,gridSize);
     return (void*) (&g_nv_of_context);
 }
 
