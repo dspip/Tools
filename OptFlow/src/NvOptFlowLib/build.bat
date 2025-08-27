@@ -2,8 +2,8 @@ set PREFIX_PATH=..\..\thirdparty\NVOptFlowSDK_5.0.7
 set INCLUDES=/I ..\..\thirdparty\NVOptFlowSDK_5.0.7\Common\NvOFBase /I ..\..\thirdparty\NVOptFlowSDK_5.0.7\Common\Utils /I ..\..\thirdparty\NVOptFlowSDK_5.0.7\NvOFInterface
 ::set CUDAFLAGS=/I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\include"
 ::set CUDALIBS="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\lib\x64"
-set CUDAFLAGS=/I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\include"
-set CUDALIBS="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\lib\x64"
+set CUDAFLAGS=/I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\include"
+set CUDALIBS="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\lib\x64"
 
 nvcc -c %PREFIX_PATH%\Common\Utils\kernel.cu
 ::cl %INCLUDES% -c %PREFIX_PATH%\Common/Utils/NvOFUtils.cpp

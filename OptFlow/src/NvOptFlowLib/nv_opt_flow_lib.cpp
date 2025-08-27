@@ -107,7 +107,7 @@ nv_of_simple_context NvOFSimpleInit(uint32_t width, uint32_t height,
     }
     //TODO(LEV) calc grid size optimal to hw
     //
-    int hintGridSize = 256;
+    int hintGridSize = 9;
     bool bEnableRoi = false;
     bool enableExternalHints = false;
 	context.nvOpticalFlow->Init(hwGridSize, hintGridSize, enableExternalHints, bEnableRoi);
@@ -144,7 +144,7 @@ void NvOFSimpleDeinit(nv_of_simple_context &context)
     CUDA_DRVAPI_CALL(cuCtxDestroy(context.cuContext));
 }
 
-DLL void * nv_opt_flow_get_context(uint32_t w, uint32_t h, NV_OF_BUFFER_FORMAT bf)
+DLL void * nv_opt_flow_get_context(uint32_t w, uint32_t h, uint32_t gridSize,  NV_OF_BUFFER_FORMAT bf)
 {
 
 
@@ -176,17 +176,18 @@ DLL void * nv_opt_flow_get_context(uint32_t w, uint32_t h, NV_OF_BUFFER_FORMAT b
         NV_OF_PERF_LEVEL_MEDIUM 
         NV_OF_PERF_LEVEL_FAST ;
     */
-    uint32_t gridSize = 1;
-    g_nv_of_context = NvOFSimpleInit(w,h,bf,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR ,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR, NV_OF_PERF_LEVEL_SLOW,0,gridSize);
+    g_nv_of_context = NvOFSimpleInit(w,h,bf,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR ,NV_OF_CUDA_BUFFER_TYPE_CUDEVICEPTR, NV_OF_PERF_LEVEL_FAST,0,gridSize);
     return (void*) (&g_nv_of_context);
 }
 
-DLL void nv_opt_flow_get_flow_field(void * contextptr, uint8_t * &data, uint8_t * out_data)
+DLL void nv_opt_flow_get_flow_field(void * contextptr, uint8_t * &data, uint8_t * out_data, uint32_t &width ,uint32_t &height)
 {
 	nv_of_simple_context * context = (nv_of_simple_context *) contextptr;
 	context->inputBuffers[context->first_buf_id]->UploadData(data,NULL,NULL);
 	double executionTime = 0;
 	NvOFSimpleExecute(*context,NULL,executionTime);
 	context->outputBuffers[0]->DownloadData(out_data);
+    width = context->outputBuffers[0]->getWidth();
+    height= context->outputBuffers[0]->getHeight();
 }
 
