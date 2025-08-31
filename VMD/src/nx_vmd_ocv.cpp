@@ -109,16 +109,19 @@ void nx_mat_to_gray(nx_mat & a )
 
     cv::cvtColor(a.m_mat, a.m_mat, cv::COLOR_BGR2GRAY);
 }
-std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_detect_motion(nx_vmd_ocv_context * vmd_context, nx_mat frame)
+std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_detect_motion(nx_vmd_ocv_context* vmd_context, nx_mat frame)
 {
 
     ZoneScoped;
-    if(!vmd_context->m_bg_sub.m_is_ready)
+    if (!vmd_context->m_bg_sub.m_is_ready)
     {
-        vmd_context->m_bg_sub = nx_bg_sub_create(2,8.0,false);
+        vmd_context->m_bg_sub = nx_bg_sub_create(50, 16, false);
     }
 
-    nx_mat_to_gray(frame);
+    {
+		ZoneScopedN("cvt bgr 2 gray");
+		nx_mat_to_gray(frame);
+	}
     nx_mat fg_mask,result;
     {
         ZoneScopedN("blur");
@@ -169,6 +172,9 @@ std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_detect_motion(nx_vmd_ocv_context * vmd_c
 int main(int argc , char ** argv)
 {
     cv::VideoCapture cap(1);
+    cap.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
+	cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
+    cap.set(cv::CAP_PROP_FORMAT, 2);
     if(!cap.isOpened())
         return -1;
     nx_vmd_ocv_context vmdcontext = {};
