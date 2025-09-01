@@ -34,6 +34,18 @@ struct nx_vmd_ocv_context
     nx_mat m_thresh_frame;
     nx_bg_sub m_bg_sub;
 };
+struct nx_vmd_ocv_params
+{
+    uint16_t m_bg_sub_history;
+    uint16_t m_bg_sub_var_threshold;
+    bool m_bg_sub_detect_shadows;
+    uint8_t m_gaussian_blur_k_size;
+    uint8_t m_threshold_min;
+    uint8_t m_morph_ellipse_size;
+    uint16_t m_obj_min_area;
+    uint16_t m_obj_max_area;
+
+};
 
 void nx_mat_guassian_blur(nx_mat frame,uint8_t size)
 {
@@ -82,7 +94,8 @@ struct nx_vmd_ocv_bbox
     cv::Rect box;
 };
 
-std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_get_object_bboxes(nx_mat mask,uint32_t min_obj_size, uint32_t &len)
+
+std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_get_object_bboxes(nx_mat mask,uint16_t min_obj_size, uint16_t max_obj_size)
 {
 
     std::vector<nx_vmd_ocv_bbox> ret;
@@ -90,7 +103,9 @@ std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_get_object_bboxes(nx_mat mask,uint32_t m
     cv::findContours(mask.m_mat,contours,cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     for(auto &c : contours)
     {
-        if(cv::contourArea(c) > min_obj_size)
+        uint16_t l_area = cv::contourArea(c);
+
+        if(l_area > min_obj_size && l_area < max_obj_size)
         {
             nx_vmd_ocv_bbox rbbox;
             rbbox.box = cv::boundingRect(c);
@@ -106,18 +121,70 @@ void nx_mat_copy(nx_mat &dest, const nx_mat &src)
 
 void nx_mat_to_gray(nx_mat & a )
 {
-
     cv::cvtColor(a.m_mat, a.m_mat, cv::COLOR_BGR2GRAY);
 }
-std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_detect_motion(nx_vmd_ocv_context* vmd_context, nx_mat frame)
-{
 
+std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_detect_motion_2(nx_vmd_ocv_context* vmd_context, nx_vmd_ocv_params & params, nx_mat frame)
+{
+    ZoneScoped;
+    {
+		ZoneScopedN("cvt bgr 2 gray");
+		nx_mat_to_gray(frame);
+	}
+    nx_mat fg_mask,result;
+    {
+        ZoneScopedN("blur and abs diff ");
+        nx_mat blur;
+        nx_mat_copy(blur,frame);
+        nx_mat_guassian_blur(blur,params.m_gaussian_blur_k_size);
+        nx_mat_abs_diff(fg_mask,blur,frame); 
+    }
+
+    vmd_context->m_curr_frame = frame;
+
+    if(!nx_mat_is_empty(vmd_context->m_prev_frame))
+    {
+        {
+            ZoneScopedN("abs diff");
+            nx_mat_abs_diff(vmd_context->m_diff_frame,vmd_context->m_prev_frame,vmd_context->m_curr_frame);
+        }
+        {
+            ZoneScopedN("thresh");
+            nx_mat_thresh(vmd_context->m_thresh_frame,vmd_context->m_diff_frame, params.m_threshold_min ,255);
+            //cv::imshow("thresh",vmd_context->m_thresh_frame.m_mat);
+        }
+        {
+            ZoneScopedN("bitwise and");
+            nx_mat_bitwise_and(result,fg_mask,vmd_context->m_thresh_frame);
+        }
+
+        {
+            ZoneScopedN("morphology");
+            nx_mat ker = nx_mat_get_morph_ellipse(params.m_morph_ellipse_size,params.m_morph_ellipse_size);
+            nx_mat_morph_open(result,ker);
+            //nx_mat_morph_close(result,ker);
+            //cv::imshow("res",result.m_mat);
+        }
+        {
+            ZoneScopedN("get contours and find bboxes");
+            std::vector<nx_vmd_ocv_bbox> bboxes = nx_vmd_ocv_get_object_bboxes(result,params.m_obj_min_area,params.m_obj_max_area);
+            nx_mat_copy(vmd_context->m_prev_frame, frame);
+            return bboxes;
+        }
+    }
+	nx_mat_copy(vmd_context->m_prev_frame, frame);
+    std::vector<nx_vmd_ocv_bbox> bboxes; 
+    return bboxes;
+
+
+}
+std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_detect_motion(nx_vmd_ocv_context* vmd_context, nx_vmd_ocv_params & params, nx_mat frame)
+{
     ZoneScoped;
     if (!vmd_context->m_bg_sub.m_is_ready)
     {
-        vmd_context->m_bg_sub = nx_bg_sub_create(50, 16, false);
+        vmd_context->m_bg_sub = nx_bg_sub_create(params.m_bg_sub_history, params.m_bg_sub_var_threshold, params.m_bg_sub_detect_shadows);
     }
-
     {
 		ZoneScopedN("cvt bgr 2 gray");
 		nx_mat_to_gray(frame);
@@ -125,9 +192,8 @@ std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_detect_motion(nx_vmd_ocv_context* vmd_co
     nx_mat fg_mask,result;
     {
         ZoneScopedN("blur");
-        nx_mat_guassian_blur(frame,9);
+        nx_mat_guassian_blur(frame,params.m_gaussian_blur_k_size);
     }
-
     {
         ZoneScopedN("apply bg sub");
         nx_vmd_ocv_apply_bg_sub(vmd_context,frame,fg_mask);
@@ -141,8 +207,7 @@ std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_detect_motion(nx_vmd_ocv_context* vmd_co
         }
         {
             ZoneScopedN("thresh");
-            nx_mat_thresh(vmd_context->m_thresh_frame,vmd_context->m_diff_frame,25 ,255);
-            cv::imshow("thresh",vmd_context->m_thresh_frame.m_mat);
+            nx_mat_thresh(vmd_context->m_thresh_frame,vmd_context->m_diff_frame, params.m_threshold_min ,255);
         }
         {
             
@@ -152,14 +217,13 @@ std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_detect_motion(nx_vmd_ocv_context* vmd_co
 
         {
             ZoneScopedN("morphology");
-            nx_mat ker = nx_mat_get_morph_ellipse(5,5);
+            nx_mat ker = nx_mat_get_morph_ellipse(params.m_morph_ellipse_size,params.m_morph_ellipse_size);
             nx_mat_morph_open(result,ker);
             nx_mat_morph_close(result,ker);
         }
         {
             ZoneScopedN("get contours and find bboxes");
-            uint32_t len = 0;
-            std::vector<nx_vmd_ocv_bbox> bboxes = nx_vmd_ocv_get_object_bboxes(result,10, len);
+            std::vector<nx_vmd_ocv_bbox> bboxes = nx_vmd_ocv_get_object_bboxes(result,params.m_obj_min_area,params.m_obj_max_area);
             nx_mat_copy(vmd_context->m_prev_frame, frame);
             return bboxes;
         }
@@ -167,24 +231,38 @@ std::vector<nx_vmd_ocv_bbox> nx_vmd_ocv_detect_motion(nx_vmd_ocv_context* vmd_co
 	nx_mat_copy(vmd_context->m_prev_frame, frame);
     std::vector<nx_vmd_ocv_bbox> bboxes; 
     return bboxes;
-
 }
+
 int main(int argc , char ** argv)
 {
     cv::VideoCapture cap(1);
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
-	cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
-    cap.set(cv::CAP_PROP_FORMAT, 2);
+    cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
+    //cap.set(cv::CAP_PROP_CONVERT_RGB, false);
+    //cap.set(cv::CAP_PROP_FORMAT, CV_8UC1);
     if(!cap.isOpened())
         return -1;
     nx_vmd_ocv_context vmdcontext = {};
+    nx_vmd_ocv_params vmdparams =  {.m_bg_sub_history = 500,
+                                    .m_bg_sub_var_threshold = 32 , 
+                                    .m_bg_sub_detect_shadows = false,
+                                    .m_gaussian_blur_k_size = 9 ,
+                                    .m_threshold_min = 20,
+                                    .m_morph_ellipse_size=2,
+                                    .m_obj_min_area=1,
+                                    .m_obj_max_area=500,
+    };
 
     cv::Mat frame;
 
     while(cap.read(frame))
     {
         nx_mat nframe ={frame};
-        std::vector<nx_vmd_ocv_bbox> bboxes = nx_vmd_ocv_detect_motion(&vmdcontext,nframe);
+#if 0 
+        std::vector<nx_vmd_ocv_bbox> bboxes = nx_vmd_ocv_detect_motion(&vmdcontext, vmdparams,nframe);
+#else 
+        std::vector<nx_vmd_ocv_bbox> bboxes = nx_vmd_ocv_detect_motion_2(&vmdcontext, vmdparams,nframe);
+#endif
         for(auto & bbox : bboxes)
         {
             cv::rectangle(frame,bbox.box,cv::Scalar(0,255.0),2);
